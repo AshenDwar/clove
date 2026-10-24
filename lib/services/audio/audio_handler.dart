@@ -8,6 +8,8 @@ import 'package:just_audio/just_audio.dart';
 
 import '../../models/clove_track.dart';
 import '../../data/database.dart';
+import '../online_library_track_resolver.dart';
+import '../online_music_provider.dart';
 import '../playlist_repository.dart';
 import 'previous_track_policy.dart';
 import 'player_formatters.dart';
@@ -43,10 +45,12 @@ class CloveAudioHandler extends BaseAudioHandler
   int _sessionWriteVersion = 0;
   Timer? _positionSaveTimer;
 
-  CloveAudioHandler() {
+  CloveAudioHandler({this.onlineMusicProvider}) {
     _listenToPlayer();
     _startPositionSaveTimer();
   }
+
+  OnlineMusicProvider? onlineMusicProvider;
 
   void _logPlaybackError(String operation, Object error) {
     if (kDebugMode) debugPrint('CLOVE: $operation failed: $error');
@@ -491,7 +495,7 @@ class CloveAudioHandler extends BaseAudioHandler
         _player.playing && _player.processingState != ProcessingState.completed;
     final currentTrack = _currentTrack;
     final currentTrackIsLiked =
-        currentTrack != null && _likedTrackIds.contains(currentTrack.path);
+        currentTrack != null && _isTrackLiked(currentTrack);
 
     playbackState.add(
       PlaybackState(
@@ -582,12 +586,24 @@ class CloveAudioHandler extends BaseAudioHandler
         : _tracks.where((candidate) => candidate.path == trackId).firstOrNull;
     if (track == null) return;
 
-    final isLiked = await PlaylistRepository(AppDatabase.instance)
-        .toggleLiked(track);
-    if (isLiked) {
-      _likedTrackIds.add(track.path);
+    final repository = PlaylistRepository(AppDatabase.instance);
+    final collections = await repository
+        .watchCollections(track.path, canonicalId: track.mediaId)
+        .first;
+    if (collections.isLiked) {
+      await repository.setLiked(track, false);
+      _likedTrackIds.removeAll([track.path, track.mediaId].whereType<String>());
     } else {
-      _likedTrackIds.remove(track.path);
+      final libraryTrack = await _resolveTrackForLibrary(track);
+      await repository.setLiked(libraryTrack, true);
+      _likedTrackIds.addAll(
+        [
+          track.path,
+          libraryTrack.path,
+          track.mediaId,
+          libraryTrack.mediaId,
+        ].whereType<String>(),
+      );
     }
     _broadcastPlaybackState();
   }
@@ -596,11 +612,30 @@ class CloveAudioHandler extends BaseAudioHandler
     final track = trackId == null
         ? _currentTrack
         : _tracks.where((candidate) => candidate.path == trackId).firstOrNull;
-    if (track == null || _likedTrackIds.contains(track.path)) return;
+    if (track == null || _isTrackLiked(track)) return;
 
-    await PlaylistRepository(AppDatabase.instance).setLiked(track, true);
-    _likedTrackIds.add(track.path);
+    final libraryTrack = await _resolveTrackForLibrary(track);
+    await PlaylistRepository(AppDatabase.instance).setLiked(libraryTrack, true);
+    _likedTrackIds.addAll(
+      [
+        track.path,
+        libraryTrack.path,
+        track.mediaId,
+        libraryTrack.mediaId,
+      ].whereType<String>(),
+    );
     _broadcastPlaybackState();
+  }
+
+  bool _isTrackLiked(CloveTrack track) =>
+      _likedTrackIds.contains(track.path) ||
+      (track.mediaId != null && _likedTrackIds.contains(track.mediaId));
+
+  Future<CloveTrack> _resolveTrackForLibrary(CloveTrack track) {
+    final provider = onlineMusicProvider;
+    return provider == null
+        ? Future.value(track)
+        : resolvePlayableLibraryTrack(track, provider);
   }
 
   @override

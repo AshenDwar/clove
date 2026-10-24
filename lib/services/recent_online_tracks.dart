@@ -3,12 +3,15 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import '../models/clove_track.dart';
 import '../models/online_music_track.dart';
+import 'offline_track_artwork.dart';
 
 /// Persists the most recently played online tracks for the Search screen.
 class RecentOnlineTracks {
   static const int limit = 50;
   static const String _fileName = 'recent_online_tracks.json';
+  Future<void> _writeTail = Future<void>.value();
 
   Future<File> _file() async {
     final directory = await getApplicationSupportDirectory();
@@ -38,27 +41,80 @@ class RecentOnlineTracks {
     OnlineMusicTrack track, {
     bool moveToTop = true,
   }) async {
-    final tracks = await load();
-    final key = _key(track);
-    if (!moveToTop && tracks.any((item) => _key(item) == key)) {
-      return tracks;
-    }
-    final withoutTrack = tracks.where((item) => _key(item) != key).toList();
-    final updated =
-        (moveToTop ? [track, ...withoutTrack] : [...withoutTrack, track])
-            .take(limit)
-            .toList(growable: false);
-    await _write(updated);
-    return updated;
+    final localized = await _withOfflineArtwork(track);
+    return _serializeWrite(() async {
+      final tracks = await load();
+      final key = _key(localized);
+      final existingIndex = tracks.indexWhere((item) => _key(item) == key);
+      if (!moveToTop && existingIndex >= 0) {
+        if (tracks[existingIndex].artworkUri == localized.artworkUri) {
+          return tracks;
+        }
+        final updated = [...tracks];
+        updated[existingIndex] = localized;
+        await _write(updated);
+        return updated;
+      }
+      final withoutTrack = tracks.where((item) => _key(item) != key).toList();
+      final updated =
+          (moveToTop
+                  ? [localized, ...withoutTrack]
+                  : [...withoutTrack, localized])
+              .take(limit)
+              .toList(growable: false);
+      await _write(updated);
+      return updated;
+    });
   }
 
-  Future<List<OnlineMusicTrack>> remove(OnlineMusicTrack track) async {
-    final tracks = await load();
-    final updated = tracks
-        .where((item) => _key(item) != _key(track))
-        .toList(growable: false);
-    await _write(updated);
-    return updated;
+  /// Downloads and stores artwork for an older recent entry when needed.
+  Future<OnlineMusicTrack> cacheArtwork(OnlineMusicTrack track) async {
+    final localized = await _withOfflineArtwork(track);
+    if (localized.artworkUri == track.artworkUri) return track;
+    await _serializeWrite(() async {
+      final tracks = await load();
+      final index = tracks.indexWhere((item) => _key(item) == _key(track));
+      if (index < 0) return;
+      final updated = [...tracks];
+      updated[index] = localized;
+      await _write(updated);
+    });
+    return localized;
+  }
+
+  Future<List<OnlineMusicTrack>> remove(OnlineMusicTrack track) =>
+      _serializeWrite(() async {
+        final tracks = await load();
+        final updated = tracks
+            .where((item) => _key(item) != _key(track))
+            .toList(growable: false);
+        await _write(updated);
+        return updated;
+      });
+
+  Future<OnlineMusicTrack> _withOfflineArtwork(OnlineMusicTrack track) async {
+    final imageUri = track.artworkUri;
+    if (imageUri == null || imageUri.scheme == 'file') return track;
+    final sourcePage = track.sourcePage.toString();
+    final localTrack = await withOfflineTrackArtwork(
+      CloveTrack(
+        path: sourcePage,
+        mediaId: sourcePage,
+        title: track.title,
+        artist: track.artist ?? track.creatorName ?? 'Unknown artist',
+        album: track.album ?? '',
+        duration: track.duration ?? Duration.zero,
+        artworkUri: imageUri,
+      ),
+    );
+    if (localTrack.artworkUri == imageUri) return track;
+    return _copyWithArtwork(track, localTrack.artworkUri);
+  }
+
+  Future<T> _serializeWrite<T>(Future<T> Function() operation) {
+    final result = _writeTail.then((_) => operation());
+    _writeTail = result.then<void>((_) {}).catchError((Object _) {});
+    return result;
   }
 
   Future<void> _write(List<OnlineMusicTrack> tracks) async {
@@ -112,4 +168,19 @@ class RecentOnlineTracks {
   }
 
   Uri? _parseUri(Object? value) => value is String ? Uri.tryParse(value) : null;
+
+  OnlineMusicTrack _copyWithArtwork(OnlineMusicTrack track, Uri? artworkUri) =>
+      OnlineMusicTrack(
+        providerId: track.providerId,
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        creatorName: track.creatorName,
+        uploaderName: track.uploaderName,
+        album: track.album,
+        artworkUri: artworkUri,
+        sourcePageUri: track.sourcePageUri,
+        duration: track.duration,
+        tags: track.tags,
+      );
 }

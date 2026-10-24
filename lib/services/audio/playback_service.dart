@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 
 import '../../models/clove_track.dart';
+import '../online_music_provider.dart';
 import 'audio_handler.dart';
 
 bool isTrackActiveInPlaybackSource({
@@ -24,6 +25,7 @@ class PlaybackService {
   static late CloveAudioHandler handler;
   static bool _initialized = false;
   static Future<void>? _initialization;
+  static OnlineMusicProvider? _onlineMusicProvider;
   static Object? initializationError;
 
   static const String localMusicSourceId = 'local_music';
@@ -65,7 +67,13 @@ class PlaybackService {
     yield* selectStream(handler);
   }
 
-  static Future<void> initialize() => _initialization ??= _initialize();
+  static Future<void> initialize({OnlineMusicProvider? onlineMusicProvider}) {
+    if (onlineMusicProvider != null) {
+      _onlineMusicProvider = onlineMusicProvider;
+      if (_initialized) handler.onlineMusicProvider = onlineMusicProvider;
+    }
+    return _initialization ??= _initialize();
+  }
 
   static Future<void> _initialize() async {
     if (_initialized) return;
@@ -75,7 +83,8 @@ class PlaybackService {
       await session.configure(const AudioSessionConfiguration.music());
 
       final audioHandler = await AudioService.init(
-        builder: CloveAudioHandler.new,
+        builder: () =>
+            CloveAudioHandler(onlineMusicProvider: _onlineMusicProvider),
         config: const AudioServiceConfig(
           androidNotificationChannelId: 'com.shvnix.clove.audio',
           androidNotificationChannelName: 'Clove Playback',

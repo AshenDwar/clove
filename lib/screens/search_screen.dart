@@ -73,6 +73,41 @@ class _SearchScreenState extends State<SearchScreen> {
     final tracks = await _recentTrackStore.load();
     if (!mounted) return;
     setState(() => _recentTracks = tracks);
+    unawaited(_cacheRecentArtwork(tracks));
+  }
+
+  Future<void> _cacheRecentArtwork(List<OnlineMusicTrack> tracks) async {
+    var nextIndex = 0;
+    Future<void> worker() async {
+      while (nextIndex < tracks.length) {
+        final track = tracks[nextIndex++];
+        if (track.artworkUri == null || track.artworkUri!.scheme == 'file') {
+          continue;
+        }
+        try {
+          final localized = await _recentTrackStore.cacheArtwork(track);
+          if (!mounted || localized.artworkUri == track.artworkUri) continue;
+          final key = '${track.providerId}:${track.id}';
+          if (!_recentTracks.any(
+            (item) => '${item.providerId}:${item.id}' == key,
+          )) {
+            continue;
+          }
+          setState(() {
+            _recentTracks = _recentTracks
+                .map(
+                  (item) =>
+                      '${item.providerId}:${item.id}' == key ? localized : item,
+                )
+                .toList(growable: false);
+          });
+        } catch (_) {
+          // A missing network image should not prevent Search from opening.
+        }
+      }
+    }
+
+    await Future.wait(List.generate(3, (_) => worker()));
   }
 
   Future<void> _removeRecentTrack(OnlineMusicTrack track) async {
@@ -246,14 +281,13 @@ class _SearchScreenState extends State<SearchScreen> {
         message: 'The downloaded song could not be found.',
       );
     }
-    final artworkUri = await _downloadArtworkForOffline(track, audioFile);
     return CloveTrack(
       path: audioFile.path,
       title: track.title,
       artist: track.artist ?? track.creatorName ?? 'Unknown artist',
       album: track.album ?? '',
       duration: track.duration ?? Duration.zero,
-      artworkUri: artworkUri,
+      artworkUri: track.artworkUri,
       mediaId: track.sourcePage.toString(),
     );
   }
@@ -265,50 +299,6 @@ class _SearchScreenState extends State<SearchScreen> {
       if (provider is! OfflineMusicDownloader) return null;
       return (provider as OfflineMusicDownloader).findOfflineAudioPath(track);
     });
-  }
-
-  Future<Uri?> _downloadArtworkForOffline(
-    OnlineMusicTrack track,
-    File audioFile,
-  ) async {
-    final artwork = track.artworkUri;
-    if (artwork == null) return null;
-    if (!{'http', 'https'}.contains(artwork.scheme) || artwork.host.isEmpty) {
-      return null;
-    }
-
-    final extension = switch (artwork.path.toLowerCase().split('.').last) {
-      'png' => 'png',
-      'webp' => 'webp',
-      'jpeg' => 'jpeg',
-      _ => 'jpg',
-    };
-    final safeId = track.id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-    final imageFile = File(
-      '${audioFile.parent.path}/${safeId}_artwork.$extension',
-    );
-    if (await imageFile.exists() && await imageFile.length() > 0) {
-      return imageFile.uri;
-    }
-
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15);
-    try {
-      final request = await client.getUrl(artwork);
-      final response = await request.close();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw const HttpException('Could not download song artwork.');
-      }
-      final bytes = await response.fold<List<int>>(
-        <int>[],
-        (buffer, chunk) => buffer..addAll(chunk),
-      );
-      if (bytes.isEmpty) throw const HttpException('Song artwork was empty.');
-      await imageFile.writeAsBytes(bytes, flush: true);
-      return imageFile.uri;
-    } finally {
-      client.close(force: true);
-    }
   }
 
   Future<void> _openTrack(
@@ -702,6 +692,7 @@ class _SearchScreenState extends State<SearchScreen> {
         }
 
         final result = displayedTracks[showingRecents ? index - 1 : index];
+        final artworkUri = result.artworkUri;
         final resultKey = '${result.providerId}:${result.id}';
         final isOpening = _onlineActions.isOpening(resultKey);
         final isQueueing = _onlineActions.isQueueing(resultKey);
@@ -744,20 +735,35 @@ class _SearchScreenState extends State<SearchScreen> {
                               height: 50,
                               child: Transform.scale(
                                 scale: 1.4, // Increase this to zoom in more
-                                child: Image.network(
-                                  result.artworkUri?.toString() ?? '',
-                                  width: 50,
-                                  height: 50,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => Container(
-                                    color: const Color(0xFF202020),
-                                    alignment: Alignment.center,
-                                    child: const Icon(
-                                      Icons.music_note_rounded,
-                                      color: _muted,
-                                    ),
-                                  ),
-                                ),
+                                child: artworkUri?.scheme == 'file'
+                                    ? Image.file(
+                                        File.fromUri(artworkUri!),
+                                        width: 50,
+                                        height: 50,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => Container(
+                                          color: const Color(0xFF202020),
+                                          alignment: Alignment.center,
+                                          child: const Icon(
+                                            Icons.music_note_rounded,
+                                            color: _muted,
+                                          ),
+                                        ),
+                                      )
+                                    : Image.network(
+                                        artworkUri?.toString() ?? '',
+                                        width: 50,
+                                        height: 50,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => Container(
+                                          color: const Color(0xFF202020),
+                                          alignment: Alignment.center,
+                                          child: const Icon(
+                                            Icons.music_note_rounded,
+                                            color: _muted,
+                                          ),
+                                        ),
+                                      ),
                               ),
                             ),
                           ),

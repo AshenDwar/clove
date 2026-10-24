@@ -23,7 +23,7 @@ Future<void> main() async {
   // Do not block the first Flutter frame on a platform-channel response.
   // If this call stalls, awaiting it here leaves Android's launch splash up.
   unawaited(_setPortraitOrientation());
-  unawaited(_initializePlaybackService());
+  unawaited(_initializePlaybackService(registry.provider));
 }
 
 Future<void> _setPortraitOrientation() async {
@@ -34,9 +34,9 @@ Future<void> _setPortraitOrientation() async {
   }
 }
 
-Future<void> _initializePlaybackService() async {
+Future<void> _initializePlaybackService(OnlineMusicProvider provider) async {
   try {
-    await PlaybackService.initialize();
+    await PlaybackService.initialize(onlineMusicProvider: provider);
     debugPrint('CLOVE: Audio service initialized successfully.');
   } catch (error, stackTrace) {
     debugPrint('CLOVE: Audio initialization failed: $error');

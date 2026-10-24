@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 
 import '../data/database.dart';
 import '../models/clove_track.dart';
+import 'offline_track_artwork.dart';
 
 const int likedSongsPlaylistId = -1;
 
@@ -222,6 +223,7 @@ class PlaylistRepository {
   });
 
   Future<void> addToPlaylist(int playlistId, CloveTrack track) async {
+    track = await withOfflineTrackArtwork(track);
     await database.transaction(() async {
       final existing =
           await (database.select(database.playlistTracks)..where(
@@ -238,7 +240,8 @@ class PlaylistRepository {
         // playback path with the downloaded file when Search/Now Playing
         // provides the offline copy later.
         if (existing.trackId != track.path ||
-            existing.canonicalId != track.mediaId) {
+            existing.canonicalId != track.mediaId ||
+            existing.artworkUri != track.artworkUri?.toString()) {
           await (database.update(database.playlistTracks)..where(
                 (entry) =>
                     entry.playlistId.equals(playlistId) &
@@ -317,69 +320,75 @@ class PlaylistRepository {
     });
   }
 
-  Future<void> togglePlaylistMembership(int playlistId, CloveTrack track) =>
-      database.transaction(() async {
-        final existing =
-            await (database.select(database.playlistTracks)..where(
-                  (entry) =>
-                      entry.playlistId.equals(playlistId) &
-                      (entry.trackId.equals(track.path) |
-                          (track.mediaId == null
-                              ? const Constant(false)
-                              : entry.canonicalId.equals(track.mediaId!))),
-                ))
-                .getSingleOrNull();
+  Future<void> togglePlaylistMembership(
+    int playlistId,
+    CloveTrack track,
+  ) async {
+    track = await withOfflineTrackArtwork(track);
+    await database.transaction(() async {
+      final existing =
+          await (database.select(database.playlistTracks)..where(
+                (entry) =>
+                    entry.playlistId.equals(playlistId) &
+                    (entry.trackId.equals(track.path) |
+                        (track.mediaId == null
+                            ? const Constant(false)
+                            : entry.canonicalId.equals(track.mediaId!))),
+              ))
+              .getSingleOrNull();
 
-        if (existing == null) {
-          final entries = await (database.select(
-            database.playlistTracks,
-          )..where((entry) => entry.playlistId.equals(playlistId))).get();
-          await database
-              .into(database.playlistTracks)
-              .insert(
-                PlaylistTracksCompanion.insert(
-                  playlistId: playlistId,
-                  trackId: track.path,
-                  title: track.title,
-                  artist: track.artist,
-                  album: track.album,
-                  durationMs: track.duration.inMilliseconds,
-                  albumId: Value(track.albumId),
-                  artworkUri: Value(track.artworkUri?.toString()),
-                  canonicalId: Value(track.mediaId),
-                  position: entries.length,
-                ),
-              );
-          await (database.update(database.userPlaylists)
-                ..where((playlist) => playlist.id.equals(playlistId)))
-              .write(UserPlaylistsCompanion(updatedAt: Value(DateTime.now())));
-          return;
-        }
+      if (existing == null) {
+        final entries = await (database.select(
+          database.playlistTracks,
+        )..where((entry) => entry.playlistId.equals(playlistId))).get();
+        await database
+            .into(database.playlistTracks)
+            .insert(
+              PlaylistTracksCompanion.insert(
+                playlistId: playlistId,
+                trackId: track.path,
+                title: track.title,
+                artist: track.artist,
+                album: track.album,
+                durationMs: track.duration.inMilliseconds,
+                albumId: Value(track.albumId),
+                artworkUri: Value(track.artworkUri?.toString()),
+                canonicalId: Value(track.mediaId),
+                position: entries.length,
+              ),
+            );
+        await (database.update(database.userPlaylists)
+              ..where((playlist) => playlist.id.equals(playlistId)))
+            .write(UserPlaylistsCompanion(updatedAt: Value(DateTime.now())));
+        return;
+      }
 
-        await (database.delete(database.playlistTracks)..where(
-              (entry) =>
-                  entry.playlistId.equals(playlistId) &
-                  entry.trackId.equals(existing.trackId),
-            ))
-            .go();
-        final remaining =
-            await (database.select(database.playlistTracks)
-                  ..where((entry) => entry.playlistId.equals(playlistId))
-                  ..orderBy([(entry) => OrderingTerm.asc(entry.position)]))
-                .get();
-        for (var index = 0; index < remaining.length; index++) {
-          if (remaining[index].position != index) {
-            await (database.update(database.playlistTracks)..where(
-                  (entry) =>
-                      entry.playlistId.equals(playlistId) &
-                      entry.trackId.equals(remaining[index].trackId),
-                ))
-                .write(PlaylistTracksCompanion(position: Value(index)));
-          }
+      await (database.delete(database.playlistTracks)..where(
+            (entry) =>
+                entry.playlistId.equals(playlistId) &
+                entry.trackId.equals(existing.trackId),
+          ))
+          .go();
+      final remaining =
+          await (database.select(database.playlistTracks)
+                ..where((entry) => entry.playlistId.equals(playlistId))
+                ..orderBy([(entry) => OrderingTerm.asc(entry.position)]))
+              .get();
+      for (var index = 0; index < remaining.length; index++) {
+        if (remaining[index].position != index) {
+          await (database.update(database.playlistTracks)..where(
+                (entry) =>
+                    entry.playlistId.equals(playlistId) &
+                    entry.trackId.equals(remaining[index].trackId),
+              ))
+              .write(PlaylistTracksCompanion(position: Value(index)));
         }
-      });
+      }
+    });
+  }
 
   Future<void> setLiked(CloveTrack track, bool liked) async {
+    if (liked) track = await withOfflineTrackArtwork(track);
     await database.transaction(() async {
       final existing =
           await (database.select(database.likedTracks)..where(
@@ -393,7 +402,8 @@ class PlaylistRepository {
       if (liked &&
           existing != null &&
           (existing.trackId != track.path ||
-              existing.canonicalId != track.mediaId)) {
+              existing.canonicalId != track.mediaId ||
+              existing.artworkUri != track.artworkUri?.toString())) {
         await (database.update(
           database.likedTracks,
         )..where((entry) => entry.trackId.equals(existing.trackId))).write(
@@ -453,66 +463,68 @@ class PlaylistRepository {
   /// Toggles a track in liked songs and returns its state after the change.
   /// The read and write share a transaction so notification taps cannot add
   /// duplicate entries or make decisions from a stale UI cache.
-  Future<bool> toggleLiked(CloveTrack track) async =>
-      database.transaction(() async {
-        final existing =
-            await (database.select(database.likedTracks)..where(
-                  (entry) =>
-                      entry.trackId.equals(track.path) |
-                      (track.mediaId == null
-                          ? const Constant(false)
-                          : entry.canonicalId.equals(track.mediaId!)),
-                ))
-                .getSingleOrNull();
+  Future<bool> toggleLiked(CloveTrack track) async {
+    track = await withOfflineTrackArtwork(track);
+    return database.transaction(() async {
+      final existing =
+          await (database.select(database.likedTracks)..where(
+                (entry) =>
+                    entry.trackId.equals(track.path) |
+                    (track.mediaId == null
+                        ? const Constant(false)
+                        : entry.canonicalId.equals(track.mediaId!)),
+              ))
+              .getSingleOrNull();
 
-        if (existing == null) {
-          final entries = await database.select(database.likedTracks).get();
-          await database
-              .into(database.likedTracks)
-              .insert(
-                LikedTracksCompanion.insert(
-                  trackId: track.path,
-                  title: track.title,
-                  artist: track.artist,
-                  album: track.album,
-                  durationMs: track.duration.inMilliseconds,
-                  albumId: Value(track.albumId),
-                  artworkUri: Value(track.artworkUri?.toString()),
-                  canonicalId: Value(track.mediaId),
-                  position: entries.length,
-                ),
-              );
-          return true;
-        }
+      if (existing == null) {
+        final entries = await database.select(database.likedTracks).get();
+        await database
+            .into(database.likedTracks)
+            .insert(
+              LikedTracksCompanion.insert(
+                trackId: track.path,
+                title: track.title,
+                artist: track.artist,
+                album: track.album,
+                durationMs: track.duration.inMilliseconds,
+                albumId: Value(track.albumId),
+                artworkUri: Value(track.artworkUri?.toString()),
+                canonicalId: Value(track.mediaId),
+                position: entries.length,
+              ),
+            );
+        return true;
+      }
 
-        if (existing.canonicalId == null && track.mediaId != null) {
-          await (database.update(database.likedTracks)
-                ..where((entry) => entry.trackId.equals(existing.trackId)))
-              .write(LikedTracksCompanion(canonicalId: Value(track.mediaId)));
-        }
+      if (existing.canonicalId == null && track.mediaId != null) {
+        await (database.update(database.likedTracks)
+              ..where((entry) => entry.trackId.equals(existing.trackId)))
+            .write(LikedTracksCompanion(canonicalId: Value(track.mediaId)));
+      }
 
-        if (existing.trackId != track.path) {
-          await (database.delete(
-            database.likedTracks,
-          )..where((entry) => entry.trackId.equals(existing.trackId))).go();
-        } else {
-          await (database.delete(
-            database.likedTracks,
-          )..where((entry) => entry.trackId.equals(track.path))).go();
-        }
-        final remaining = await (database.select(
+      if (existing.trackId != track.path) {
+        await (database.delete(
           database.likedTracks,
-        )..orderBy([(entry) => OrderingTerm.asc(entry.position)])).get();
-        for (var index = 0; index < remaining.length; index++) {
-          if (remaining[index].position != index) {
-            await (database.update(database.likedTracks)..where(
-                  (entry) => entry.trackId.equals(remaining[index].trackId),
-                ))
-                .write(LikedTracksCompanion(position: Value(index)));
-          }
+        )..where((entry) => entry.trackId.equals(existing.trackId))).go();
+      } else {
+        await (database.delete(
+          database.likedTracks,
+        )..where((entry) => entry.trackId.equals(track.path))).go();
+      }
+      final remaining = await (database.select(
+        database.likedTracks,
+      )..orderBy([(entry) => OrderingTerm.asc(entry.position)])).get();
+      for (var index = 0; index < remaining.length; index++) {
+        if (remaining[index].position != index) {
+          await (database.update(database.likedTracks)..where(
+                (entry) => entry.trackId.equals(remaining[index].trackId),
+              ))
+              .write(LikedTracksCompanion(position: Value(index)));
         }
-        return false;
-      });
+      }
+      return false;
+    });
+  }
 
   static CloveTrack _fromPlaylistEntry(PlaylistTrack entry) => CloveTrack(
     path: entry.trackId,
