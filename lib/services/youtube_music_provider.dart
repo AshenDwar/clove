@@ -294,7 +294,7 @@ class YoutubeMusicProvider
       throw const OnlineMusicProviderFailure(
         kind: OnlineMusicFailureKind.sourceResolutionFailed,
         message:
-            'Could not resolve audio. Check your connection and try again.',
+            'Could not resolve audio. Try playing another song.',
       );
     }
   }
