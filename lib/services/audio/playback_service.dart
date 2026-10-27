@@ -19,6 +19,11 @@ String? trackIdFromMediaItem(MediaItem? item) {
   return trackId is String ? trackId : item?.id;
 }
 
+String? canonicalTrackIdFromMediaItem(MediaItem? item) {
+  final trackId = item?.extras?['canonicalTrackId'];
+  return trackId is String ? trackId : trackIdFromMediaItem(item);
+}
+
 class PlaybackService {
   PlaybackService._();
 
@@ -134,6 +139,14 @@ class PlaybackService {
       onPlaybackError: onPlaybackError,
       shouldStart: shouldStart,
     );
+  }
+
+  static Future<void> updateCurrentTrackArtwork(
+    String trackId,
+    Uri artworkUri,
+  ) async {
+    await initialize();
+    await handler.updateCurrentTrackArtwork(trackId, artworkUri);
   }
 
   static Future<void> addTracksToQueue(

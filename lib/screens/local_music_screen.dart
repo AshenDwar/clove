@@ -564,7 +564,7 @@ class _LocalMusicScreenState extends State<LocalMusicScreen>
                                               style: TextStyle(
                                                 color: current
                                                     ? _cloveMint
-                                                    : Colors.white,
+                                                    : const Color(0xFFE0E0E0),
                                                 fontWeight: FontWeight.w700,
                                                 fontSize: 15,
                                               ),

@@ -227,6 +227,41 @@ class CloveAudioHandler extends BaseAudioHandler
     );
   });
 
+  /// Replaces the active track's remote artwork URI with its cached file URI.
+  /// The track identity check prevents a late artwork download from changing
+  /// the artwork for a newer song selected in the meantime.
+  Future<void> updateCurrentTrackArtwork(String trackId, Uri artworkUri) =>
+      _serializeQueueMutation(() async {
+        final index = _player.currentIndex;
+        if (index == null || index < 0 || index >= _tracks.length) return;
+        final currentTrack = _tracks[index];
+        if (currentTrack.path != trackId && currentTrack.mediaId != trackId) {
+          return;
+        }
+
+        final updatedTrack = CloveTrack(
+          path: currentTrack.path,
+          title: currentTrack.title,
+          artist: currentTrack.artist,
+          album: currentTrack.album,
+          duration: currentTrack.duration,
+          albumId: currentTrack.albumId,
+          dateAdded: currentTrack.dateAdded,
+          audioHeaders: currentTrack.audioHeaders,
+          artworkUri: artworkUri,
+          mediaId: currentTrack.mediaId,
+          sourceUri: currentTrack.sourceUri,
+        );
+        final updatedItem = _queueItems[index].copyWith(artUri: artworkUri);
+        final tracks = [..._tracks]..[index] = updatedTrack;
+        final items = [..._queueItems]..[index] = updatedItem;
+        _tracks = List.unmodifiable(tracks);
+        _queueItems = List.unmodifiable(items);
+        queue.add(_queueItems);
+        mediaItem.add(updatedItem);
+        _scheduleSessionSave();
+      });
+
   Future<void> _replaceQueue(
     List<CloveTrack> tracks, {
     required int initialIndex,
@@ -479,6 +514,7 @@ class CloveAudioHandler extends BaseAudioHandler
         extras: {
           ...?item.extras,
           'trackId': track.path,
+          'canonicalTrackId': track.mediaId ?? track.path,
           'queueEntryId': entryId,
           ...queueSourceExtras(
             sourceId,
@@ -725,6 +761,7 @@ class CloveAudioHandler extends BaseAudioHandler
               ...?track.toMediaItem().extras,
               ...extras,
               'trackId': track.path,
+              'canonicalTrackId': track.mediaId ?? track.path,
               'queueEntryId': queueId,
             },
           ),

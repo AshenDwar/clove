@@ -147,10 +147,10 @@ class LocalArtwork extends StatelessWidget {
       boxShadow: elevation
           ? [
               BoxShadow(
-                color: const Color(0xFF1DE9B6).withValues(alpha: 0.12),
-                blurRadius: 28,
+                color: const Color(0xFF000000).withValues(alpha: 0.45),
+                blurRadius: 12,
                 spreadRadius: 1,
-                offset: const Offset(0, 12),
+                offset: const Offset(0, 8),
               ),
             ]
           : null,

@@ -4,6 +4,7 @@
 # 🌿 Clove
  
 Download the latest APK, try it out, and support the project by giving it a ⭐ on GitHub!
+Latest Version: 2.3.10. Always check for the latest version and update your app. Click to ⬇️ Download APK for the latest version.
 
 <br/>
 

@@ -55,7 +55,7 @@ class PlaylistArtwork extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: likedSongs
               ? const [Color(0xFF7C4DCC), Color(0xFFDCCBFF)]
-              : const [Color(0xFF7C4DCC), Color(0xFFDCCBFF)],
+              : const [Color(0xFF1C1C20), Color(0xFF38383F)],
         ),
       ),
       child: Center(

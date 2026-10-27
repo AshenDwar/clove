@@ -42,6 +42,8 @@ class _SearchScreenState extends State<SearchScreen> {
   late final _playlistRepository = PlaylistRepository(AppDatabase.instance);
   final _recentTrackStore = RecentOnlineTracks();
   List<OnlineMusicTrack> _recentTracks = const [];
+  StreamSubscription<MediaItem?>? _playbackMediaSubscription;
+  String? _lastPlaylistRecentKey;
   late OnlineMusicProvider _provider;
   final List<OnlineMusicTrack> _results = [];
   final _onlineActions = OnlineActionTracker.instance;
@@ -64,6 +66,10 @@ class _SearchScreenState extends State<SearchScreen> {
     _searchController.addListener(_handleQueryChanged);
     _onlineActions.addListener(_handleOnlineActionsChanged);
     _loadRecentTracks();
+    _playbackMediaSubscription = PlaybackService.mediaItemStream.listen(
+      (item) => unawaited(_recordPlaylistPlayback(item)),
+      onError: (Object _) {},
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _searchFocusNode.requestFocus();
     });
@@ -74,6 +80,59 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!mounted) return;
     setState(() => _recentTracks = tracks);
     unawaited(_cacheRecentArtwork(tracks));
+  }
+
+  Future<void> _recordPlaylistPlayback(MediaItem? item) async {
+    final currentItem = item;
+    if (currentItem == null ||
+        currentItem.extras?['sourceType'] != 'playlist') {
+      return;
+    }
+    final canonicalId = canonicalTrackIdFromMediaItem(currentItem);
+    final sourcePage = Uri.tryParse(canonicalId ?? '');
+    final videoId = _youtubeVideoId(sourcePage);
+    if (videoId == null || sourcePage == null) return;
+
+    final trackKey = 'youtube:$videoId';
+    if (_lastPlaylistRecentKey == trackKey) return;
+    _lastPlaylistRecentKey = trackKey;
+
+    try {
+      final updated = await _recentTrackStore.record(
+        OnlineMusicTrack(
+          providerId: 'youtube',
+          id: videoId,
+          title: currentItem.title,
+          artist: currentItem.artist,
+          album: currentItem.album,
+          artworkUri: currentItem.artUri,
+          sourcePageUri: sourcePage,
+          duration: currentItem.duration,
+        ),
+        moveToTop: false,
+      );
+      if (mounted) setState(() => _recentTracks = updated);
+    } catch (_) {
+      // A recents write failure should not affect playlist playback.
+    }
+  }
+
+  String? _youtubeVideoId(Uri? uri) {
+    if (uri == null) return null;
+    final host = uri.host.toLowerCase();
+    if (host == 'youtu.be' && uri.pathSegments.isNotEmpty) {
+      return uri.pathSegments.first;
+    }
+    if (host == 'youtube.com' || host.endsWith('.youtube.com')) {
+      final queryId = uri.queryParameters['v'];
+      if (queryId != null && queryId.isNotEmpty) return queryId;
+      final segments = uri.pathSegments;
+      if (segments.length >= 2 &&
+          {'shorts', 'live', 'embed'}.contains(segments.first)) {
+        return segments[1];
+      }
+    }
+    return null;
   }
 
   Future<void> _cacheRecentArtwork(List<OnlineMusicTrack> tracks) async {
@@ -116,13 +175,18 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() => _recentTracks = tracks);
   }
 
-  Future<void> _recordRecentTrack(
+  Future<Uri?> _recordRecentTrack(
     OnlineMusicTrack track, {
     bool moveToTop = true,
   }) async {
     final tracks = await _recentTrackStore.record(track, moveToTop: moveToTop);
-    if (!mounted) return;
-    setState(() => _recentTracks = tracks);
+    if (mounted) setState(() => _recentTracks = tracks);
+    return tracks
+        .where(
+          (item) => item.providerId == track.providerId && item.id == track.id,
+        )
+        .firstOrNull
+        ?.artworkUri;
   }
 
   @override
@@ -135,6 +199,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _onlineActions.removeListener(_handleOnlineActionsChanged);
+    unawaited(_playbackMediaSubscription?.cancel());
     _searchController
       ..removeListener(_handleQueryChanged)
       ..dispose();
@@ -314,14 +379,23 @@ class _SearchScreenState extends State<SearchScreen> {
       final playableSource = await _usablePlaybackSource(track, source);
       if (requestGeneration != _playRequestGeneration) return;
       await _startOnlinePlayback(track, playableSource, requestGeneration);
+      Uri? offlineArtworkUri;
       if (fromRecents) {
-        await _queueRemainingRecents(track, requestGeneration);
         // Playing a recent item must not reorder the Recents list. Its stored
         // position remains stable while the complete recent queue is loaded.
-        await _recordRecentTrack(track, moveToTop: false);
+        offlineArtworkUri = await _recordRecentTrack(track, moveToTop: false);
       } else {
         // A song launched from normal Search becomes the newest recent item.
-        await _recordRecentTrack(track, moveToTop: true);
+        offlineArtworkUri = await _recordRecentTrack(track, moveToTop: true);
+      }
+      if (offlineArtworkUri?.scheme == 'file') {
+        await PlaybackService.updateCurrentTrackArtwork(
+          track.sourcePage.toString(),
+          offlineArtworkUri!,
+        );
+      }
+      if (fromRecents && requestGeneration == _playRequestGeneration) {
+        await _queueRemainingRecents(track, requestGeneration);
       }
     } catch (error) {
       if (!mounted || requestGeneration != _playRequestGeneration) return;
@@ -575,7 +649,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                     icon: const Icon(
                                       Icons.clear_rounded,
                                       color: Colors.white38,
-                                      size: 20,
+                                      size: 22,
                                     ),
                                   )
                                 : null,
@@ -697,164 +771,160 @@ class _SearchScreenState extends State<SearchScreen> {
         final isOpening = _onlineActions.isOpening(resultKey);
         final isQueueing = _onlineActions.isQueueing(resultKey);
 
-        return StreamBuilder<String?>(
-          stream: PlaybackService.playbackSourceStream,
-          initialData: PlaybackService.activeSourceId,
-          builder: (context, sourceSnapshot) => StreamBuilder<MediaItem?>(
-            stream: PlaybackService.mediaItemStream,
-            builder: (context, itemSnapshot) {
-              final active = isTrackActiveInPlaybackSource(
-                activeSourceId: sourceSnapshot.data,
-                expectedSourceId: 'online_youtube',
-                currentTrackId: trackIdFromMediaItem(itemSnapshot.data),
-                trackId: result.sourcePage.toString(),
-              );
+        return StreamBuilder<MediaItem?>(
+          stream: PlaybackService.mediaItemStream,
+          builder: (context, itemSnapshot) {
+            final currentItem = itemSnapshot.data;
+            final trackUrl = result.sourcePage.toString();
+            final active =
+                trackIdFromMediaItem(currentItem) == trackUrl ||
+                canonicalTrackIdFromMediaItem(currentItem) == trackUrl;
 
-              return QueueSwipe(
-                successMessage: 'Added to queue',
-                onSwipeLeft: () => _likeOnlineTrack(result),
-                onQueue: () => _queueOnlineTrack(result),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    onTap: isOpening || isQueueing
-                        ? null
-                        : () => _openTrack(result, fromRecents: showingRecents),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 7,
-                      ),
-                      child: Row(
-                        children: [
-                          // Square artwork, matching PlaylistDetailScreen.
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(13),
-                            child: SizedBox(
-                              width: 50,
-                              height: 50,
-                              child: Transform.scale(
-                                scale: 1.4, // Increase this to zoom in more
-                                child: artworkUri?.scheme == 'file'
-                                    ? Image.file(
-                                        File.fromUri(artworkUri!),
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, _, _) => Container(
-                                          color: const Color(0xFF202020),
-                                          alignment: Alignment.center,
-                                          child: const Icon(
-                                            Icons.music_note_rounded,
-                                            color: _muted,
-                                          ),
-                                        ),
-                                      )
-                                    : Image.network(
-                                        artworkUri?.toString() ?? '',
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, _, _) => Container(
-                                          color: const Color(0xFF202020),
-                                          alignment: Alignment.center,
-                                          child: const Icon(
-                                            Icons.music_note_rounded,
-                                            color: _muted,
-                                          ),
+            return QueueSwipe(
+              successMessage: 'Added to queue',
+              onSwipeLeft: () => _likeOnlineTrack(result),
+              onQueue: () => _queueOnlineTrack(result),
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  onTap: isOpening || isQueueing
+                      ? null
+                      : () => _openTrack(result, fromRecents: showingRecents),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 7,
+                    ),
+                    child: Row(
+                      children: [
+                        // Square artwork, matching PlaylistDetailScreen.
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(13),
+                          child: SizedBox(
+                            width: 50,
+                            height: 50,
+                            child: Transform.scale(
+                              scale: 1.4, // Increase this to zoom in more
+                              child: artworkUri?.scheme == 'file'
+                                  ? Image.file(
+                                      File.fromUri(artworkUri!),
+                                      width: 50,
+                                      height: 50,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, _, _) => Container(
+                                        color: const Color(0xFF202020),
+                                        alignment: Alignment.center,
+                                        child: const Icon(
+                                          Icons.music_note_rounded,
+                                          color: _muted,
                                         ),
                                       ),
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(width: 13),
-
-                          // Song title, artist, and duration.
-                          Expanded(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    if (active) ...[
-                                      const PlayingEqualizer(),
-                                      const SizedBox(width: 8),
-                                    ],
-                                    Expanded(
-                                      child: Text(
-                                        result.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: active ? _mint : Colors.white,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
+                                    )
+                                  : Image.network(
+                                      artworkUri?.toString() ?? '',
+                                      width: 50,
+                                      height: 50,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, _, _) => Container(
+                                        color: const Color(0xFF202020),
+                                        alignment: Alignment.center,
+                                        child: const Icon(
+                                          Icons.music_note_rounded,
+                                          color: _muted,
                                         ),
                                       ),
                                     ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        result.artist ??
-                                            result.creatorName ??
-                                            'Unknown artist',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        softWrap: false,
-                                        style: const TextStyle(
-                                          color: _muted,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                    if (result.duration
-                                        case final duration?) ...[
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        _formatDuration(duration),
-                                        style: const TextStyle(
-                                          color: _muted,
-                                          fontSize: 12,
-                                          fontFeatures: [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ],
                             ),
                           ),
+                        ),
 
-                          const SizedBox(width: 8),
+                        const SizedBox(width: 13),
 
-                          if (showingRecents)
-                            JuggleIconButton(
-                              tooltip: 'Remove from recents',
-                              size: 40,
-                              onPressed: () => _removeRecentTrack(result),
-                              icon: const Icon(
-                                Icons.close_rounded,
-                                color: _muted,
-                                size: 23,
+                        // Song title, artist, and duration.
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  if (active) ...[
+                                    const PlayingEqualizer(),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  Expanded(
+                                    child: Text(
+                                      result.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: active
+                                            ? _mint
+                                            : const Color(0xFFE0E0E0),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      result.artist ??
+                                          result.creatorName ??
+                                          'Unknown artist',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      softWrap: false,
+                                      style: const TextStyle(
+                                        color: _muted,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  if (result.duration case final duration?) ...[
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _formatDuration(duration),
+                                      style: const TextStyle(
+                                        color: _muted,
+                                        fontSize: 12,
+                                        fontFeatures: [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(width: 8),
+                        _searchSaveButton(result, isOpening || isQueueing),
+
+                        if (showingRecents)
+                          JuggleIconButton(
+                            tooltip: 'Remove from recents',
+                            size: 40,
+                            onPressed: () => _removeRecentTrack(result),
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              color: _muted,
+                              size: 23,
                             ),
-                          _searchSaveButton(result, isOpening || isQueueing),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
-              );
-            },
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -881,8 +951,8 @@ class _SearchScreenState extends State<SearchScreen> {
       onPressed: () => _queueOnlineTrackFromIcon(track),
       icon: Icon(
         isSaved ? Icons.check_circle_rounded : Icons.add_circle_outline_rounded,
-        color: isSaved ? _mint : Colors.white,
-        size: 26,
+        color: isSaved ? _mint : _muted,
+        size: 20,
       ),
     );
 

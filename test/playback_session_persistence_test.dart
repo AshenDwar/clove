@@ -41,6 +41,8 @@ void main() {
       try {
         final audioFile = File('${directory.path}/online-song.m4a');
         await audioFile.writeAsBytes([1, 2, 3]);
+        final artworkFile = File('${directory.path}/online-song.jpg');
+        await artworkFile.writeAsBytes([4, 5, 6]);
         final track = CloveTrack(
           path: 'https://www.youtube.com/watch?v=online123',
           sourceUri: audioFile.uri,
@@ -48,6 +50,7 @@ void main() {
           artist: 'Artist',
           album: '',
           duration: const Duration(minutes: 3),
+          artworkUri: artworkFile.uri,
           audioHeaders: const {'User-Agent': 'Clove'},
         );
 
@@ -59,6 +62,7 @@ void main() {
         expect(restored.path, track.path);
         expect(restored.sourceUri, audioFile.uri);
         expect(restored.audioUri, audioFile.uri);
+        expect(restored.artworkUri, artworkFile.uri);
         expect(restored.audioHeaders, track.audioHeaders);
         expect(canRestorePlaybackTrack(restored), isTrue);
 

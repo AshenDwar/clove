@@ -792,7 +792,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
                                       style: TextStyle(
                                         color: active
                                             ? _cloveMint
-                                            : Colors.white,
+                                            : const Color(0xFFE0E0E0),
                                         fontWeight: FontWeight.w700,
                                         fontSize: 15,
                                       ),

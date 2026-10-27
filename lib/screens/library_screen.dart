@@ -1043,12 +1043,16 @@ class LibraryScreenState extends State<LibraryScreen>
               width: 58,
               height: 58,
               decoration: BoxDecoration(
-                color: const Color(0xFF202622),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF181D1A), Color(0xFF3D4940)],
+                ),
                 borderRadius: BorderRadius.circular(13),
               ),
               child: const Icon(
                 Icons.phone_android_rounded,
-                color: _cloveMint,
+                color: Colors.white,
                 size: 28,
               ),
             ),

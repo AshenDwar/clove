@@ -1,3 +1,4 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:clove/services/audio/playback_service.dart';
 import 'package:clove/models/clove_track.dart';
 import 'package:clove/models/online_music_track.dart';
@@ -5,6 +6,21 @@ import 'package:clove/services/online_playback_bridge.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('online playlist entries expose their canonical track identity', () {
+    const canonicalId = 'https://www.youtube.com/watch?v=online-123';
+    final item = MediaItem(
+      id: 'queue-entry-1',
+      title: 'Online song',
+      extras: {
+        'trackId': '/offline/online-123.m4a',
+        'canonicalTrackId': canonicalId,
+      },
+    );
+
+    expect(canonicalTrackIdFromMediaItem(item), canonicalId);
+    expect(trackIdFromMediaItem(item), '/offline/online-123.m4a');
+  });
+
   test(
     'playback source IDs distinguish local, liked, and individual playlists',
     () {
