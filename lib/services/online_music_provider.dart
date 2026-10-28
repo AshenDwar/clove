@@ -16,6 +16,35 @@ abstract interface class CancellableOnlineMusicProvider {
   Future<void> cancelPendingPlayback();
 }
 
+/// Optional discovery API for providers that can find music related to a
+/// currently playing track using their supported search capabilities.
+abstract interface class OnlineMusicDiscoveryProvider
+    implements OnlineMusicProvider {
+  Future<List<OnlineMusicTrack>> discoverRelated(OnlineMusicTrack track);
+}
+
+/// Optional request-scoped hooks for recommendation work. Cancelling these
+/// requests must not cancel the source currently being played by the provider.
+abstract interface class CancellableOnlineRecommendationProvider {
+  Future<List<OnlineMusicTrack>> discoverRecommendations(
+    OnlineMusicTrack track, {
+    required int requestId,
+  });
+
+  Future<DirectAudioSource> resolveRecommendationSource(
+    OnlineMusicTrack track, {
+    required int requestId,
+  });
+
+  Future<void> cancelRecommendationRequest(int requestId);
+}
+
+/// Optional fast resolver used to prepare queue entries without downloading a
+/// complete offline copy. Temporary stream URLs must be treated as expiring.
+abstract interface class OnlineMusicStreamResolver {
+  Future<DirectAudioSource> resolveStreamingSource(OnlineMusicTrack track);
+}
+
 abstract interface class OfflineMusicDownloader {
   Future<DirectAudioSource> downloadForOffline(OnlineMusicTrack track);
 

@@ -13,7 +13,8 @@ Map<String, dynamic> trackToPlaybackSessionJson(CloveTrack track) => {
   'audioHeaders': track.audioHeaders,
   'artworkUri': track.artworkUri?.toString(),
   'mediaId': track.mediaId,
-  'sourceUri': track.sourceUri?.toString(),
+  // Extracted provider URLs expire and must be resolved again for playback.
+  'sourceUri': _stableSessionSourceUri(track)?.toString(),
 };
 
 CloveTrack trackFromPlaybackSessionJson(Map<String, dynamic> data) =>
@@ -54,7 +55,10 @@ bool canRestorePlaybackTrack(CloveTrack track) {
       final host = sourceUri.host.toLowerCase();
       return host != 'youtube.com' &&
           !host.endsWith('.youtube.com') &&
-          host != 'youtu.be';
+          host != 'youtu.be' &&
+          host != 'googlevideo.com' &&
+          !host.endsWith('.googlevideo.com') &&
+          sourceUri.queryParameters['expire'] == null;
     }
     return false;
   }
@@ -65,6 +69,18 @@ bool canRestorePlaybackTrack(CloveTrack track) {
   }
   if (pathUri.scheme == 'file') return File.fromUri(pathUri).existsSync();
   return pathUri.scheme == 'content';
+}
+
+Uri? _stableSessionSourceUri(CloveTrack track) {
+  final uri = track.sourceUri;
+  if (uri == null) return null;
+  final host = uri.host.toLowerCase();
+  if (host == 'googlevideo.com' ||
+      host.endsWith('.googlevideo.com') ||
+      uri.queryParameters['expire'] != null) {
+    return null;
+  }
+  return uri;
 }
 
 Uri? _uriFromJson(Object? value) {

@@ -53,6 +53,8 @@ class PlaybackService {
       playbackStateStream.map((state) => state.playing).distinct();
   static Stream<Duration> get positionStream =>
       _afterInitialization((audioHandler) => audioHandler.positionStream);
+  static Stream<Duration?> get durationStream =>
+      _afterInitialization((audioHandler) => audioHandler.durationStream);
   static Stream<String?> get playbackSourceStream =>
       _afterInitialization((audioHandler) async* {
         yield audioHandler.activeSourceId;

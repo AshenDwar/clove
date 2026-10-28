@@ -61,6 +61,29 @@ void main() {
   );
 
   test(
+    'shuffle insertion keeps manual additions before the automatic tail',
+    () {
+      final order = AppendOnlyShuffleOrder(random: Random(7));
+      order.insert(0, 4);
+      order.shuffle(initialIndex: 2);
+      final before = List<int>.of(order.indices);
+      final insertAt = 3;
+      final insertionPosition = before.indexWhere((index) => index >= insertAt);
+
+      order.insert(insertAt, 1);
+
+      final adjustedBefore = before.map(
+        (index) => index >= insertAt ? index + 1 : index,
+      );
+      expect(order.indices, [
+        ...adjustedBefore.take(insertionPosition),
+        insertAt,
+        ...adjustedBefore.skip(insertionPosition),
+      ]);
+    },
+  );
+
+  test(
     'upcoming indexes follow effective order and exclude the current item',
     () {
       expect(upcomingQueueIndices(2, [3, 2, 0, 1]), [0, 1]);
@@ -157,6 +180,7 @@ void main() {
       final playlistTwo = queueSourceExtras('playlist:24', position: 0);
       final liked = queueSourceExtras('liked_songs', position: 4);
       final local = queueSourceExtras('local_music', position: 7);
+      final recents = queueSourceExtras(searchRecentsSourceId, position: 0);
 
       expect(playlistOne, {
         'sourceId': 'playlist:11',
@@ -169,6 +193,15 @@ void main() {
       expect(playlistTwo['sourcePosition'], 0);
       expect(liked['sourceType'], 'liked_songs');
       expect(local['sourceType'], 'local_music');
+      expect(recents['sourceType'], 'online_youtube');
+      expect(
+        automaticRecommendationsEnabledForSource(searchRecentsSourceId),
+        isFalse,
+      );
+      expect(
+        automaticRecommendationsEnabledForSource('online_youtube'),
+        isTrue,
+      );
     },
   );
 

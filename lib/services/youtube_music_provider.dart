@@ -9,12 +9,16 @@ import 'package:ytdlp_flutter/ytdlp_flutter.dart';
 
 import '../data/database.dart';
 import '../models/online_music_track.dart';
+import 'audio/smart_music_queue.dart';
 import 'audio/playback_service.dart';
 import 'online_music_provider.dart';
+import 'serial_task_queue.dart';
 
 const _audioOnlyTargetBitrate = 160000;
 const _maxCachedStreamUrls = 20;
 const _maxCachedAudioFiles = 50;
+const _androidAudioDownloadTimeout = Duration(minutes: 2);
+const _ytdlpCancelTimeout = Duration(seconds: 5);
 
 class _CachedStream {
   const _CachedStream(this.url, this.expiresAt);
@@ -31,6 +35,9 @@ class _CachedStream {
 class YoutubeMusicProvider
     implements
         OnlineMusicProvider,
+        OnlineMusicDiscoveryProvider,
+        CancellableOnlineRecommendationProvider,
+        OnlineMusicStreamResolver,
         CancellableOnlineMusicProvider,
         OfflineMusicDownloader {
   YoutubeMusicProvider({YoutubeExplode? youtube})
@@ -38,11 +45,15 @@ class YoutubeMusicProvider
 
   final YoutubeExplode _youtube;
   final Map<String, _CachedStream> _streamCache = {};
+  final Map<int, YoutubeExplode> _recommendationClients = {};
+  final Map<int, String> _recommendationTaskIds = {};
+  final Map<int, Completer<void>> _recommendationCancellations = {};
+  final Set<int> _cancelledRecommendationRequests = {};
   final Map<String, String> _audioFileCache = {};
   final Map<String, int> _audioPlayCounts = {};
   Future<void>? _ytdlpInitialization;
   Future<void>? _audioCacheInitialization;
-  Future<void> _androidDownloadTail = Future<void>.value();
+  final SerialTaskQueue _androidDownloadQueue = SerialTaskQueue();
   Future<void> _metadataWriteTail = Future<void>.value();
   StreamSubscription? _mediaItemSubscription;
   StreamSubscription? _playbackStateSubscription;
@@ -80,6 +91,7 @@ class YoutubeMusicProvider
               id: video.id.value,
               title: video.title,
               artist: video.author,
+              uploaderName: video.author,
               artworkUri: Uri.tryParse(video.thumbnails.highResUrl),
               sourcePageUri: Uri.https('www.youtube.com', '/watch', {
                 'v': video.id.value,
@@ -112,6 +124,7 @@ class YoutubeMusicProvider
                 id: info.id,
                 title: info.title,
                 artist: info.uploader ?? 'Unknown artist',
+                uploaderName: info.uploader,
                 artworkUri: Uri.tryParse(
                   info.thumbnailUrl ??
                       'https://i.ytimg.com/vi/${info.id}/hqdefault.jpg',
@@ -135,6 +148,201 @@ class YoutubeMusicProvider
     }
     return const OnlineMusicPage(tracks: []);
   }
+
+  @override
+  Future<List<OnlineMusicTrack>> discoverRelated(OnlineMusicTrack track) async {
+    final results = await Future.wait([
+      _discoverRelatedVideos(track),
+      _discoverBySearch(track),
+    ]);
+    final seen = <String>{};
+    return results
+        .expand((tracks) => tracks)
+        .where(
+          (candidate) => seen.add('${candidate.providerId}:${candidate.id}'),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<OnlineMusicTrack>> discoverRecommendations(
+    OnlineMusicTrack track, {
+    required int requestId,
+  }) async {
+    if (_cancelledRecommendationRequests.contains(requestId)) return const [];
+    final client = YoutubeExplode();
+    _recommendationClients[requestId] = client;
+    try {
+      final results = await Future.wait([
+        _discoverRelatedVideos(track, youtube: client),
+        _discoverBySearch(track, youtube: client),
+      ]);
+      if (_cancelledRecommendationRequests.contains(requestId)) return const [];
+      final seen = <String>{};
+      return results
+          .expand((tracks) => tracks)
+          .where(
+            (candidate) => seen.add('${candidate.providerId}:${candidate.id}'),
+          )
+          .toList(growable: false);
+    } finally {
+      if (identical(_recommendationClients[requestId], client)) {
+        _recommendationClients.remove(requestId);
+        client.close();
+      }
+      _cancelledRecommendationRequests.remove(requestId);
+    }
+  }
+
+  Future<List<OnlineMusicTrack>> _discoverRelatedVideos(
+    OnlineMusicTrack track, {
+    YoutubeExplode? youtube,
+  }) async {
+    final client = youtube ?? _youtube;
+    try {
+      final seed = await client.videos
+          .get(VideoId(track.id))
+          .timeout(const Duration(seconds: 20));
+      final related = await client.videos
+          .getRelatedVideos(seed)
+          .timeout(const Duration(seconds: 25));
+      return related
+              ?.take(30)
+              .map(
+                (video) => OnlineMusicTrack(
+                  providerId: 'youtube',
+                  id: video.id.value,
+                  title: video.title,
+                  artist: video.author,
+                  uploaderName: video.author,
+                  artworkUri: Uri.tryParse(video.thumbnails.highResUrl),
+                  sourcePageUri: Uri.https('www.youtube.com', '/watch', {
+                    'v': video.id.value,
+                  }),
+                  duration: video.duration,
+                  tags: video.keywords.toList(growable: false),
+                ),
+              )
+              .toList(growable: false) ??
+          const [];
+    } on Exception {
+      if (kDebugMode) {
+        debugPrint('CLOVE: YouTube related-video discovery failed.');
+      }
+      return const [];
+    }
+  }
+
+  Future<List<OnlineMusicTrack>> _discoverBySearch(
+    OnlineMusicTrack track, {
+    YoutubeExplode? youtube,
+  }) async {
+    final queries = recommendationSearchQueries(track);
+    final pages = await Future.wait(
+      queries.map((query) async {
+        try {
+          final videos = await (youtube ?? _youtube).search
+              .search(query)
+              .timeout(const Duration(seconds: 22));
+          return OnlineMusicPage(
+            tracks: videos.take(20).map(_videoToTrack).toList(growable: false),
+          );
+        } on Exception {
+          if (kDebugMode) {
+            debugPrint(
+              'CLOVE: an online recommendation search request failed.',
+            );
+          }
+          return const OnlineMusicPage(tracks: []);
+        }
+      }),
+    );
+    return pages.expand((page) => page.tracks).toList(growable: false);
+  }
+
+  OnlineMusicTrack _videoToTrack(Video video) => OnlineMusicTrack(
+    providerId: 'youtube',
+    id: video.id.value,
+    title: video.title,
+    artist: video.author,
+    uploaderName: video.author,
+    artworkUri: Uri.tryParse(video.thumbnails.highResUrl),
+    sourcePageUri: Uri.https('www.youtube.com', '/watch', {
+      'v': video.id.value,
+    }),
+    duration: video.duration,
+    tags: video.keywords.toList(growable: false),
+  );
+
+  @override
+  Future<DirectAudioSource> resolveRecommendationSource(
+    OnlineMusicTrack track, {
+    required int requestId,
+  }) async {
+    if (_cancelledRecommendationRequests.contains(requestId)) {
+      throw const OnlineMusicProviderFailure(
+        kind: OnlineMusicFailureKind.sourceResolutionFailed,
+        message: 'Recommendation preparation was cancelled.',
+      );
+    }
+    _recommendationCancellations.putIfAbsent(requestId, Completer<void>.new);
+    try {
+      if (_isAndroid) {
+        try {
+          return await _downloadAndroidAudio(
+            track,
+            recommendationRequestId: requestId,
+          );
+        } on Exception {
+          if (_cancelledRecommendationRequests.contains(requestId)) rethrow;
+        }
+      }
+      final client = YoutubeExplode();
+      _recommendationClients[requestId] = client;
+      try {
+        final source = await _resolveStream(track, youtube: client);
+        if (_cancelledRecommendationRequests.contains(requestId)) {
+          throw const OnlineMusicProviderFailure(
+            kind: OnlineMusicFailureKind.sourceResolutionFailed,
+            message: 'Recommendation preparation was cancelled.',
+          );
+        }
+        return source;
+      } finally {
+        if (identical(_recommendationClients[requestId], client)) {
+          _recommendationClients.remove(requestId);
+          client.close();
+        }
+      }
+    } finally {
+      _cancelledRecommendationRequests.remove(requestId);
+      _recommendationCancellations.remove(requestId);
+    }
+  }
+
+  @override
+  Future<void> cancelRecommendationRequest(int requestId) async {
+    final hasPendingWork =
+        _recommendationClients.containsKey(requestId) ||
+        _recommendationTaskIds.containsKey(requestId) ||
+        _recommendationCancellations.containsKey(requestId);
+    if (!hasPendingWork) return;
+    _cancelledRecommendationRequests.add(requestId);
+    final cancellation = _recommendationCancellations[requestId];
+    if (cancellation != null && !cancellation.isCompleted) {
+      cancellation.complete();
+    }
+    _recommendationClients.remove(requestId)?.close();
+    final taskId = _recommendationTaskIds.remove(requestId);
+    if (taskId != null) {
+      if (_activeTaskId == taskId) _activeTaskId = null;
+      await _cancelYtdlpTask(taskId);
+    }
+  }
+
+  @override
+  Future<DirectAudioSource> resolveStreamingSource(OnlineMusicTrack track) =>
+      _resolveStream(track);
 
   @override
   Future<DirectAudioSource> resolvePlaybackSource(
@@ -174,19 +382,47 @@ class YoutubeMusicProvider
     return path;
   }
 
-  Future<DirectAudioSource> _downloadAndroidAudio(OnlineMusicTrack track) {
-    final download = _androidDownloadTail.then(
-      (_) => _downloadAndroidAudioNow(track),
-    );
-    _androidDownloadTail = download
-        .then<void>((_) {})
-        .catchError((Object _) {});
-    return download;
+  Future<DirectAudioSource> _downloadAndroidAudio(
+    OnlineMusicTrack track, {
+    int? recommendationRequestId,
+  }) async {
+    // Check the local cache before entering the serialized download queue. A
+    // stalled download must never block playback of an already cached song.
+    await (_audioCacheInitialization ??= _initializeAudioCache());
+    final cachedPath = _audioFileCache[track.id];
+    if (cachedPath != null && await File(cachedPath).exists()) {
+      return DirectAudioSource(
+        uri: Uri.file(cachedPath),
+        isAppManagedFile: true,
+      );
+    }
+
+    if (recommendationRequestId != null &&
+        _cancelledRecommendationRequests.contains(recommendationRequestId)) {
+      throw const OnlineMusicProviderFailure(
+        kind: OnlineMusicFailureKind.sourceResolutionFailed,
+        message: 'Recommendation preparation was cancelled.',
+      );
+    }
+    return _androidDownloadQueue.run(() {
+      if (recommendationRequestId != null &&
+          _cancelledRecommendationRequests.contains(recommendationRequestId)) {
+        throw const OnlineMusicProviderFailure(
+          kind: OnlineMusicFailureKind.sourceResolutionFailed,
+          message: 'Recommendation preparation was cancelled.',
+        );
+      }
+      return _downloadAndroidAudioNow(
+        track,
+        recommendationRequestId: recommendationRequestId,
+      );
+    });
   }
 
   Future<DirectAudioSource> _downloadAndroidAudioNow(
-    OnlineMusicTrack track,
-  ) async {
+    OnlineMusicTrack track, {
+    int? recommendationRequestId,
+  }) async {
     await (_ytdlpInitialization ??= Ytdlp.init());
     await (_audioCacheInitialization ??= _initializeAudioCache());
     _startPlaybackTracking();
@@ -213,12 +449,50 @@ class YoutubeMusicProvider
     }
     final taskId = 'clove_${track.id}_${++_requestCounter}';
     _activeTaskId = taskId;
+    if (recommendationRequestId != null) {
+      _recommendationTaskIds[recommendationRequestId] = taskId;
+      _recommendationCancellations.putIfAbsent(
+        recommendationRequestId,
+        Completer<void>.new,
+      );
+    }
     try {
-      final path = await Ytdlp.downloadAudio(
+      final nativeDownload = Ytdlp.downloadAudio(
         url: track.sourcePage.toString(),
         outputDir: audioDirectory.path,
         taskId: taskId,
       );
+      late final String path;
+      try {
+        final download = nativeDownload.timeout(_androidAudioDownloadTimeout);
+        final cancellation = recommendationRequestId == null
+            ? null
+            : _recommendationCancellations[recommendationRequestId];
+        path = cancellation == null
+            ? await download
+            : await Future.any([
+                download,
+                cancellation.future.then<String>((_) {
+                  throw const OnlineMusicProviderFailure(
+                    kind: OnlineMusicFailureKind.sourceResolutionFailed,
+                    message: 'Recommendation preparation was cancelled.',
+                  );
+                }),
+              ]);
+      } on TimeoutException {
+        if (_activeTaskId == taskId) _activeTaskId = null;
+        unawaited(
+          nativeDownload.then<void>(
+            (latePath) => _deleteFile(latePath),
+            onError: (Object _) {},
+          ),
+        );
+        await _cancelYtdlpTask(taskId);
+        throw const OnlineMusicProviderFailure(
+          kind: OnlineMusicFailureKind.sourceResolutionFailed,
+          message: 'Audio preparation timed out. Retrying with a stream.',
+        );
+      }
       if (_activeTaskId != taskId) {
         await _deleteFile(path);
         throw const OnlineMusicProviderFailure(
@@ -240,10 +514,17 @@ class YoutubeMusicProvider
       );
     } finally {
       if (_activeTaskId == taskId) _activeTaskId = null;
+      if (recommendationRequestId != null &&
+          _recommendationTaskIds[recommendationRequestId] == taskId) {
+        _recommendationTaskIds.remove(recommendationRequestId);
+      }
     }
   }
 
-  Future<DirectAudioSource> _resolveStream(OnlineMusicTrack track) async {
+  Future<DirectAudioSource> _resolveStream(
+    OnlineMusicTrack track, {
+    YoutubeExplode? youtube,
+  }) async {
     final cached = _streamCache.remove(track.id);
     if (cached != null && cached.isUsable) {
       _streamCache[track.id] = cached;
@@ -251,7 +532,7 @@ class YoutubeMusicProvider
     }
 
     try {
-      final manifest = await _youtube.videos.streams
+      final manifest = await (youtube ?? _youtube).videos.streams
           .getManifest(VideoId(track.id))
           .timeout(const Duration(seconds: 35));
       final streams = manifest.audioOnly.toList()
@@ -293,8 +574,7 @@ class YoutubeMusicProvider
     } on Exception {
       throw const OnlineMusicProviderFailure(
         kind: OnlineMusicFailureKind.sourceResolutionFailed,
-        message:
-            'Could not resolve audio. Try playing another song.',
+        message: 'Could not resolve audio. Try playing another song.',
       );
     }
   }
@@ -427,7 +707,10 @@ class YoutubeMusicProvider
     if (!_isPlaybackPlaying || _currentQueueEntryId == null) return;
     final entryId = _currentQueueEntryId!;
     if (entryId == _lastCountedQueueEntryId) return;
-    if (_currentSourceId != 'online_youtube') return;
+    if (_currentSourceId != 'online_youtube' &&
+        _currentSourceId != 'search_recents') {
+      return;
+    }
     final trackId = _currentTrackId;
     if (trackId == null) return;
     final uri = Uri.tryParse(trackId);
@@ -473,9 +756,17 @@ class YoutubeMusicProvider
     _activeTaskId = null;
     if (taskId == null) return;
     try {
-      await Ytdlp.cancel(taskId);
+      await Ytdlp.cancel(taskId).timeout(_ytdlpCancelTimeout);
     } on Exception {
       // The task may have completed before cancellation reached the plugin.
+    }
+  }
+
+  Future<void> _cancelYtdlpTask(String taskId) async {
+    try {
+      await Ytdlp.cancel(taskId).timeout(_ytdlpCancelTimeout);
+    } on Exception {
+      // Cancellation is best-effort; timeout still releases the Dart queue.
     }
   }
 

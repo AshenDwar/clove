@@ -146,456 +146,500 @@ class _NowPlayingScreenState extends State<NowPlayingScreen>
                           }
 
                           final track = _trackForItem(item);
-                          final duration = item.duration ?? Duration.zero;
-
-                          return LayoutBuilder(
-                            builder: (context, constraints) {
-                              final artSize = math.min(
-                                (constraints.maxWidth - 64).clamp(160.0, 420.0),
-                                (constraints.maxHeight - 360).clamp(
-                                  160.0,
-                                  420.0,
-                                ),
+                          return StreamBuilder<Duration?>(
+                            stream: PlaybackService.durationStream,
+                            builder: (context, durationSnapshot) {
+                              final duration = resolvePlaybackDuration(
+                                durationSnapshot.data,
+                                item.duration,
                               );
-
-                              return Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  24,
-                                  8,
-                                  24,
-                                  12,
-                                ),
-                                child: Column(
-                                  children: [
-                                    // Header
-                                    Row(
-                                      children: [
-                                        JuggleIconButton(
-                                          tooltip: 'Close player',
-                                          size: 48,
-                                          onPressed: () =>
-                                              Navigator.maybePop(context),
-                                          icon: const Icon(
-                                            Icons.keyboard_arrow_down_rounded,
-                                            color: Colors.white,
-                                            size: 30,
-                                          ),
-                                        ),
-                                        const Expanded(
-                                          child: Column(
-                                            children: [
-                                              Text(
-                                                'NOW PLAYING',
-                                                style: TextStyle(
-                                                  color: _muted,
-                                                  fontSize: 10,
-                                                  letterSpacing: 2,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                              SizedBox(height: 4),
-                                              Text(
-                                                'Clove Library',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-
-                                        // Queue button
-                                        JuggleIconButton(
-                                          tooltip: 'Show queue',
-                                          size: 48,
-                                          onPressed: _showQueue,
-                                          icon: const Icon(
-                                            Icons.queue_music_rounded,
-                                            color: Colors.white,
-                                            size: 24,
-                                          ),
-                                        ),
-                                      ],
+                              return LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final artSize = math.min(
+                                    (constraints.maxWidth - 64).clamp(
+                                      160.0,
+                                      420.0,
                                     ),
-
-                                    const Spacer(),
-
-                                    // Album artwork
-                                    Center(
-                                      child: LocalArtwork(
-                                        track: track,
-                                        size: artSize,
-                                        borderRadius: 22,
-                                        elevation: true,
-                                        iconSize: 96,
-                                      ),
+                                    (constraints.maxHeight - 360).clamp(
+                                      160.0,
+                                      420.0,
                                     ),
+                                  );
 
-                                    const Spacer(),
-
-                                    // Track information
-                                    Row(
+                                  return Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      24,
+                                      8,
+                                      24,
+                                      12,
+                                    ),
+                                    child: Column(
                                       children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
+                                        // Header
+                                        Row(
+                                          children: [
+                                            JuggleIconButton(
+                                              tooltip: 'Close player',
+                                              size: 48,
+                                              onPressed: () =>
+                                                  Navigator.maybePop(context),
+                                              icon: const Icon(
+                                                Icons
+                                                    .keyboard_arrow_down_rounded,
+                                                color: Colors.white,
+                                                size: 30,
+                                              ),
+                                            ),
+                                            const Expanded(
+                                              child: Column(
                                                 children: [
-                                                  Expanded(
-                                                    child: MarqueeText(
-                                                      text: item.title,
-                                                      pixelsPerSecond: 32,
-                                                      style: const TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 23,
-                                                        fontWeight:
-                                                            FontWeight.w800,
-                                                      ),
+                                                  Text(
+                                                    'NOW PLAYING',
+                                                    style: TextStyle(
+                                                      color: _muted,
+                                                      fontSize: 10,
+                                                      letterSpacing: 2,
+                                                      fontWeight:
+                                                          FontWeight.w700,
                                                     ),
                                                   ),
-
-                                                  const SizedBox(width: 8),
-
-                                                  // Add to Playlist — matching MainShell mini-player
-                                                  StreamBuilder<
-                                                    TrackCollections
-                                                  >(
-                                                    stream: _playlistRepository
-                                                        .watchCollections(
-                                                          track.path,
-                                                          canonicalId:
-                                                              track.mediaId,
-                                                        ),
-                                                    builder: (context, savedSnapshot) {
-                                                      final collections =
-                                                          savedSnapshot.data;
-
-                                                      final isSaved =
-                                                          collections != null &&
-                                                          (collections
-                                                                  .isLiked ||
-                                                              collections
-                                                                  .playlistIds
-                                                                  .isNotEmpty);
-
-                                                      return JuggleIconButton(
-                                                        tooltip: isSaved
-                                                            ? 'Saved to playlists'
-                                                            : 'Add to playlists',
-                                                        size: 42,
-                                                        onPressed: () => showAddToPlaylistSheet(
-                                                          context,
-                                                          repository:
-                                                              _playlistRepository,
-                                                          track: track,
-                                                          animationStyle: const AnimationStyle(
-                                                            curve: Curves
-                                                                .easeOutCubic,
-                                                            reverseCurve: Curves
-                                                                .easeInCubic,
-                                                            duration: Duration(
-                                                              milliseconds: 420,
-                                                            ),
-                                                            reverseDuration:
-                                                                Duration(
-                                                                  milliseconds:
-                                                                      260,
-                                                                ),
-                                                          ),
-                                                        ),
-                                                        icon: Icon(
-                                                          isSaved
-                                                              ? Icons
-                                                                    .check_circle_rounded
-                                                              : Icons
-                                                                    .add_circle_outline_rounded,
-                                                          color: isSaved
-                                                              ? _cloveMint
-                                                              : Colors.white,
-                                                          size: 26,
-                                                        ),
-                                                      );
-                                                    },
+                                                  SizedBox(height: 4),
+                                                  Text(
+                                                    'Clove Library',
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 13,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
                                                   ),
                                                 ],
                                               ),
+                                            ),
 
-                                              const SizedBox(height: 7),
-
-                                              Text(
-                                                item.artist ?? 'Unknown artist',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  color: _muted,
-                                                  fontSize: 15,
-                                                ),
-                                              ),
-
-                                              if ((item.album ?? '')
-                                                  .isNotEmpty) ...[
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  item.album!,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    color: Color(0xFF77777E),
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-
-                                    const SizedBox(height: 48),
-
-                                    // Playback progress
-                                    StreamBuilder<Duration>(
-                                      stream: PlaybackService.positionStream,
-                                      builder: (context, positionSnapshot) {
-                                        final position = _scrubbing
-                                            ? _scrubPosition ?? Duration.zero
-                                            : positionSnapshot.data ??
-                                                  Duration.zero;
-
-                                        final maxMs =
-                                            duration.inMilliseconds > 0
-                                            ? duration.inMilliseconds
-                                            : 1;
-
-                                        final value = position.inMilliseconds
-                                            .clamp(0, maxMs)
-                                            .toDouble();
-
-                                        return Column(
-                                          children: [
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 3,
-                                                  ),
-                                              child: SliderTheme(
-                                                data: SliderTheme.of(context).copyWith(
-                                                  trackHeight: 2,
-                                                  thumbShape:
-                                                      const RoundSliderThumbShape(
-                                                        enabledThumbRadius: 5,
-                                                      ),
-                                                  overlayShape:
-                                                      SliderComponentShape
-                                                          .noOverlay,
-                                                  activeTrackColor: _cloveMint,
-                                                  inactiveTrackColor:
-                                                      Colors.white12,
-                                                  thumbColor: _cloveMint,
-                                                  overlayColor:
-                                                      Colors.transparent,
-                                                  trackShape:
-                                                      const ExtendedSliderTrackShape(),
-                                                ),
-                                                child: Slider(
-                                                  min: 0,
-                                                  max: maxMs.toDouble(),
-                                                  value: value,
-                                                  onChangeStart: (_) {
-                                                    setState(() {
-                                                      _scrubbing = true;
-                                                    });
-                                                  },
-                                                  onChanged:
-                                                      duration == Duration.zero
-                                                      ? null
-                                                      : (newValue) {
-                                                          setState(() {
-                                                            _scrubPosition =
-                                                                Duration(
-                                                                  milliseconds:
-                                                                      newValue
-                                                                          .round(),
-                                                                );
-                                                          });
-                                                        },
-                                                  onChangeEnd:
-                                                      duration == Duration.zero
-                                                      ? null
-                                                      : (newValue) {
-                                                          final target =
-                                                              Duration(
-                                                                milliseconds:
-                                                                    newValue
-                                                                        .round(),
-                                                              );
-
-                                                          setState(() {
-                                                            _scrubbing = false;
-                                                            _scrubPosition =
-                                                                null;
-                                                          });
-
-                                                          PlaybackService.seek(
-                                                            target,
-                                                          );
-                                                        },
-                                                ),
+                                            // Queue button
+                                            JuggleIconButton(
+                                              tooltip: 'Show queue',
+                                              size: 48,
+                                              onPressed: _showQueue,
+                                              icon: const Icon(
+                                                Icons.queue_music_rounded,
+                                                color: Colors.white,
+                                                size: 24,
                                               ),
                                             ),
-                                            Row(
+                                          ],
+                                        ),
+
+                                        const Spacer(),
+
+                                        // Album artwork
+                                        Center(
+                                          child: LocalArtwork(
+                                            track: track,
+                                            size: artSize,
+                                            borderRadius: 22,
+                                            elevation: true,
+                                            iconSize: 96,
+                                          ),
+                                        ),
+
+                                        const Spacer(),
+
+                                        // Track information
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
+                                                    children: [
+                                                      Expanded(
+                                                        child: MarqueeText(
+                                                          text: item.title,
+                                                          pixelsPerSecond: 32,
+                                                          style:
+                                                              const TextStyle(
+                                                                color: Colors
+                                                                    .white,
+                                                                fontSize: 23,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w800,
+                                                              ),
+                                                        ),
+                                                      ),
+
+                                                      const SizedBox(width: 8),
+
+                                                      // Add to Playlist — matching MainShell mini-player
+                                                      StreamBuilder<
+                                                        TrackCollections
+                                                      >(
+                                                        stream: _playlistRepository
+                                                            .watchCollections(
+                                                              track.path,
+                                                              canonicalId:
+                                                                  track.mediaId,
+                                                            ),
+                                                        builder: (context, savedSnapshot) {
+                                                          final collections =
+                                                              savedSnapshot
+                                                                  .data;
+
+                                                          final isSaved =
+                                                              collections !=
+                                                                  null &&
+                                                              (collections
+                                                                      .isLiked ||
+                                                                  collections
+                                                                      .playlistIds
+                                                                      .isNotEmpty);
+
+                                                          return JuggleIconButton(
+                                                            tooltip: isSaved
+                                                                ? 'Saved to playlists'
+                                                                : 'Add to playlists',
+                                                            size: 42,
+                                                            onPressed: () => showAddToPlaylistSheet(
+                                                              context,
+                                                              repository:
+                                                                  _playlistRepository,
+                                                              track: track,
+                                                              animationStyle: const AnimationStyle(
+                                                                curve: Curves
+                                                                    .easeOutCubic,
+                                                                reverseCurve: Curves
+                                                                    .easeInCubic,
+                                                                duration: Duration(
+                                                                  milliseconds:
+                                                                      420,
+                                                                ),
+                                                                reverseDuration:
+                                                                    Duration(
+                                                                      milliseconds:
+                                                                          260,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                            icon: Icon(
+                                                              isSaved
+                                                                  ? Icons
+                                                                        .check_circle_rounded
+                                                                  : Icons
+                                                                        .add_circle_outline_rounded,
+                                                              color: isSaved
+                                                                  ? _cloveMint
+                                                                  : Colors
+                                                                        .white,
+                                                              size: 26,
+                                                            ),
+                                                          );
+                                                        },
+                                                      ),
+                                                    ],
+                                                  ),
+
+                                                  const SizedBox(height: 7),
+
+                                                  Text(
+                                                    item.artist ??
+                                                        'Unknown artist',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: _muted,
+                                                      fontSize: 15,
+                                                    ),
+                                                  ),
+
+                                                  if ((item.album ?? '')
+                                                      .isNotEmpty) ...[
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      item.album!,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                        color: Color(
+                                                          0xFF77777E,
+                                                        ),
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+
+                                        const SizedBox(height: 48),
+
+                                        // Playback progress
+                                        StreamBuilder<Duration>(
+                                          stream:
+                                              PlaybackService.positionStream,
+                                          builder: (context, positionSnapshot) {
+                                            final position = _scrubbing
+                                                ? _scrubPosition ??
+                                                      Duration.zero
+                                                : positionSnapshot.data ??
+                                                      Duration.zero;
+
+                                            final maxMs =
+                                                duration.inMilliseconds > 0
+                                                ? duration.inMilliseconds
+                                                : 1;
+
+                                            final value = position
+                                                .inMilliseconds
+                                                .clamp(0, maxMs)
+                                                .toDouble();
+
+                                            return Column(
+                                              children: [
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 3,
+                                                      ),
+                                                  child: SliderTheme(
+                                                    data: SliderTheme.of(context).copyWith(
+                                                      trackHeight: 2,
+                                                      thumbShape:
+                                                          const RoundSliderThumbShape(
+                                                            enabledThumbRadius:
+                                                                5,
+                                                          ),
+                                                      overlayShape:
+                                                          SliderComponentShape
+                                                              .noOverlay,
+                                                      activeTrackColor:
+                                                          _cloveMint,
+                                                      inactiveTrackColor:
+                                                          Colors.white12,
+                                                      thumbColor: _cloveMint,
+                                                      overlayColor:
+                                                          Colors.transparent,
+                                                      trackShape:
+                                                          const ExtendedSliderTrackShape(),
+                                                    ),
+                                                    child: Slider(
+                                                      min: 0,
+                                                      max: maxMs.toDouble(),
+                                                      value: value,
+                                                      onChangeStart: (_) {
+                                                        setState(() {
+                                                          _scrubbing = true;
+                                                        });
+                                                      },
+                                                      onChanged:
+                                                          duration ==
+                                                              Duration.zero
+                                                          ? null
+                                                          : (newValue) {
+                                                              setState(() {
+                                                                _scrubPosition =
+                                                                    Duration(
+                                                                      milliseconds:
+                                                                          newValue
+                                                                              .round(),
+                                                                    );
+                                                              });
+                                                            },
+                                                      onChangeEnd:
+                                                          duration ==
+                                                              Duration.zero
+                                                          ? null
+                                                          : (newValue) {
+                                                              final target =
+                                                                  Duration(
+                                                                    milliseconds:
+                                                                        newValue
+                                                                            .round(),
+                                                                  );
+
+                                                              setState(() {
+                                                                _scrubbing =
+                                                                    false;
+                                                                _scrubPosition =
+                                                                    null;
+                                                              });
+
+                                                              PlaybackService.seek(
+                                                                target,
+                                                              );
+                                                            },
+                                                    ),
+                                                  ),
+                                                ),
+                                                Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    Text(
+                                                      formatPlaybackTime(
+                                                        position,
+                                                      ),
+                                                      style: const TextStyle(
+                                                        color: _muted,
+                                                        fontSize: 11,
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      formatPlaybackTime(
+                                                        duration,
+                                                      ),
+                                                      style: const TextStyle(
+                                                        color: _muted,
+                                                        fontSize: 11,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        ),
+
+                                        const SizedBox(height: 32),
+
+                                        // Playback controls
+                                        StreamBuilder<PlaybackState>(
+                                          stream: PlaybackService
+                                              .playbackStateStream,
+                                          builder: (context, stateSnapshot) {
+                                            final state = stateSnapshot.data;
+                                            final playing =
+                                                state?.playing ?? false;
+                                            final shuffled =
+                                                state?.shuffleMode ==
+                                                AudioServiceShuffleMode.all;
+                                            final repeat =
+                                                state?.repeatMode ??
+                                                AudioServiceRepeatMode.none;
+
+                                            return Row(
                                               mainAxisAlignment:
                                                   MainAxisAlignment
                                                       .spaceBetween,
                                               children: [
-                                                Text(
-                                                  formatPlaybackTime(position),
-                                                  style: const TextStyle(
-                                                    color: _muted,
-                                                    fontSize: 11,
+                                                // Shuffle
+                                                JuggleIconButton(
+                                                  tooltip: shuffled
+                                                      ? 'Turn shuffle off'
+                                                      : 'Turn shuffle on',
+                                                  size: 44,
+                                                  onPressed: () =>
+                                                      PlaybackService.setShuffleEnabled(
+                                                        !shuffled,
+                                                      ),
+                                                  icon: Icon(
+                                                    Icons.shuffle_rounded,
+                                                    color: shuffled
+                                                        ? _cloveMint
+                                                        : _muted,
                                                   ),
                                                 ),
-                                                Text(
-                                                  formatPlaybackTime(duration),
-                                                  style: const TextStyle(
-                                                    color: _muted,
-                                                    fontSize: 11,
+
+                                                // Previous track
+                                                JuggleIconButton(
+                                                  tooltip: 'Previous track',
+                                                  size: 48,
+                                                  onPressed:
+                                                      PlaybackService.previous,
+                                                  icon: const Icon(
+                                                    Icons.skip_previous_rounded,
+                                                    size: 38,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+
+                                                // Play / Pause
+                                                JuggleIconButton(
+                                                  tooltip: playing
+                                                      ? 'Pause'
+                                                      : 'Play',
+                                                  size: 68,
+                                                  onPressed: () => playing
+                                                      ? PlaybackService.pause()
+                                                      : PlaybackService.play(),
+                                                  icon: Container(
+                                                    width: 64,
+                                                    height: 64,
+                                                    decoration:
+                                                        const BoxDecoration(
+                                                          color: _cloveMint,
+                                                          shape:
+                                                              BoxShape.circle,
+                                                        ),
+                                                    child: Icon(
+                                                      playing
+                                                          ? Icons.pause_rounded
+                                                          : Icons
+                                                                .play_arrow_rounded,
+                                                      size: 38,
+                                                      color: const Color(
+                                                        0xFF0B0B0B,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+
+                                                // Next track
+                                                JuggleIconButton(
+                                                  tooltip: 'Next track',
+                                                  size: 48,
+                                                  onPressed:
+                                                      PlaybackService.next,
+                                                  icon: const Icon(
+                                                    Icons.skip_next_rounded,
+                                                    size: 38,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+
+                                                // Repeat
+                                                JuggleIconButton(
+                                                  tooltip: _repeatTooltip(
+                                                    repeat,
+                                                  ),
+                                                  size: 44,
+                                                  onPressed: () =>
+                                                      PlaybackService.setRepeatMode(
+                                                        nextRepeatMode(repeat),
+                                                      ),
+                                                  icon: Icon(
+                                                    repeat ==
+                                                            AudioServiceRepeatMode
+                                                                .one
+                                                        ? Icons
+                                                              .repeat_one_rounded
+                                                        : Icons.repeat_rounded,
+                                                    color:
+                                                        repeat ==
+                                                            AudioServiceRepeatMode
+                                                                .none
+                                                        ? _muted
+                                                        : _cloveMint,
                                                   ),
                                                 ),
                                               ],
-                                            ),
-                                          ],
-                                        );
-                                      },
+                                            );
+                                          },
+                                        ),
+
+                                        const SizedBox(height: 8),
+                                      ],
                                     ),
-
-                                    const SizedBox(height: 32),
-
-                                    // Playback controls
-                                    StreamBuilder<PlaybackState>(
-                                      stream:
-                                          PlaybackService.playbackStateStream,
-                                      builder: (context, stateSnapshot) {
-                                        final state = stateSnapshot.data;
-                                        final playing = state?.playing ?? false;
-                                        final shuffled =
-                                            state?.shuffleMode ==
-                                            AudioServiceShuffleMode.all;
-                                        final repeat =
-                                            state?.repeatMode ??
-                                            AudioServiceRepeatMode.none;
-
-                                        return Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            // Shuffle
-                                            JuggleIconButton(
-                                              tooltip: shuffled
-                                                  ? 'Turn shuffle off'
-                                                  : 'Turn shuffle on',
-                                              size: 44,
-                                              onPressed: () =>
-                                                  PlaybackService.setShuffleEnabled(
-                                                    !shuffled,
-                                                  ),
-                                              icon: Icon(
-                                                Icons.shuffle_rounded,
-                                                color: shuffled
-                                                    ? _cloveMint
-                                                    : _muted,
-                                              ),
-                                            ),
-
-                                            // Previous track
-                                            JuggleIconButton(
-                                              tooltip: 'Previous track',
-                                              size: 48,
-                                              onPressed:
-                                                  PlaybackService.previous,
-                                              icon: const Icon(
-                                                Icons.skip_previous_rounded,
-                                                size: 38,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-
-                                            // Play / Pause
-                                            JuggleIconButton(
-                                              tooltip: playing
-                                                  ? 'Pause'
-                                                  : 'Play',
-                                              size: 68,
-                                              onPressed: () => playing
-                                                  ? PlaybackService.pause()
-                                                  : PlaybackService.play(),
-                                              icon: Container(
-                                                width: 64,
-                                                height: 64,
-                                                decoration: const BoxDecoration(
-                                                  color: _cloveMint,
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: Icon(
-                                                  playing
-                                                      ? Icons.pause_rounded
-                                                      : Icons
-                                                            .play_arrow_rounded,
-                                                  size: 38,
-                                                  color: const Color(
-                                                    0xFF0B0B0B,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-
-                                            // Next track
-                                            JuggleIconButton(
-                                              tooltip: 'Next track',
-                                              size: 48,
-                                              onPressed: PlaybackService.next,
-                                              icon: const Icon(
-                                                Icons.skip_next_rounded,
-                                                size: 38,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-
-                                            // Repeat
-                                            JuggleIconButton(
-                                              tooltip: _repeatTooltip(repeat),
-                                              size: 44,
-                                              onPressed: () =>
-                                                  PlaybackService.setRepeatMode(
-                                                    nextRepeatMode(repeat),
-                                                  ),
-                                              icon: Icon(
-                                                repeat ==
-                                                        AudioServiceRepeatMode
-                                                            .one
-                                                    ? Icons.repeat_one_rounded
-                                                    : Icons.repeat_rounded,
-                                                color:
-                                                    repeat ==
-                                                        AudioServiceRepeatMode
-                                                            .none
-                                                    ? _muted
-                                                    : _cloveMint,
-                                              ),
-                                            ),
-                                          ],
-                                        );
-                                      },
-                                    ),
-
-                                    const SizedBox(height: 8),
-                                  ],
-                                ),
+                                  );
+                                },
                               );
                             },
                           );

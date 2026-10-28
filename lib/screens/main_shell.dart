@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -11,6 +13,7 @@ import '../data/database.dart';
 import '../services/playlist_repository.dart';
 import '../services/online_music_provider_scope.dart';
 import '../services/clove_notifications.dart';
+import '../services/rhythm_guard_service.dart';
 import 'login_screen.dart';
 
 const Color _obsidian = Color(0xFF0B0B0B);
@@ -42,10 +45,20 @@ class _MainShellState extends State<MainShell> {
     _username = widget.username;
     _playlistRepository = PlaylistRepository(AppDatabase.instance);
     _screens = _createScreens();
+    unawaited(RhythmGuardService.instance.start());
   }
 
   List<Widget> _createScreens() => [
-    HomeScreen(key: _homeKey, username: _username, onOpenProfile: _openProfile),
+    HomeScreen(
+      key: _homeKey,
+      username: _username,
+      onOpenProfile: _openProfile,
+      onOpenSearch: _openSearch,
+      onOpenSearchQuery: (query) => _openSearch(initialQuery: query),
+      onOpenLibrary: () => _selectTab(1),
+      onOpenPlaylist: _openHomePlaylist,
+      isActive: _selectedTab == 0,
+    ),
     LibraryScreen(
       key: _libraryKey,
       username: _username,
@@ -96,12 +109,19 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  Future<void> _openSearch() async {
+  void _openHomePlaylist(int playlistId) {
+    _selectTab(1);
+    _libraryKey.currentState?.openPlaylist(playlistId);
+  }
+
+  Future<void> _openSearch({String? initialQuery}) async {
     await Navigator.push<void>(
       context,
       PageRouteBuilder<void>(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            SearchScreen(provider: OnlineMusicProviderScope.of(context)),
+        pageBuilder: (context, animation, secondaryAnimation) => SearchScreen(
+          provider: OnlineMusicProviderScope.of(context),
+          initialQuery: initialQuery,
+        ),
 
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           const begin = Offset(0.0, 1.0);

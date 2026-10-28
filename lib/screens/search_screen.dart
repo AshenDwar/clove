@@ -11,6 +11,7 @@ import '../services/online_action_tracker.dart';
 import '../services/online_music_provider_scope.dart';
 import '../services/online_playback_bridge.dart';
 import '../services/audio/playback_service.dart';
+import '../services/audio/playback_queue.dart';
 import '../services/clove_notifications.dart';
 import '../data/database.dart';
 import '../services/playlist_repository.dart';
@@ -27,9 +28,10 @@ const Color _muted = Color(0xFFB7B5BE);
 const Duration _searchRequestTimeout = Duration(seconds: 45);
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key, this.provider});
+  const SearchScreen({super.key, this.provider, this.initialQuery});
 
   final OnlineMusicProvider? provider;
+  final String? initialQuery;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -63,6 +65,8 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    final initialQuery = widget.initialQuery?.trim() ?? '';
+    if (initialQuery.isNotEmpty) _searchController.text = initialQuery;
     _searchController.addListener(_handleQueryChanged);
     _onlineActions.addListener(_handleOnlineActionsChanged);
     _loadRecentTracks();
@@ -71,7 +75,12 @@ class _SearchScreenState extends State<SearchScreen> {
       onError: (Object _) {},
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _searchFocusNode.requestFocus();
+      if (!mounted) return;
+      if (initialQuery.isNotEmpty) {
+        _submitQuery();
+      } else {
+        _searchFocusNode.requestFocus();
+      }
     });
   }
 
@@ -378,7 +387,13 @@ class _SearchScreenState extends State<SearchScreen> {
       if (requestGeneration != _playRequestGeneration) return;
       final playableSource = await _usablePlaybackSource(track, source);
       if (requestGeneration != _playRequestGeneration) return;
-      await _startOnlinePlayback(track, playableSource, requestGeneration);
+      final sourceId = fromRecents ? searchRecentsSourceId : 'online_youtube';
+      await _startOnlinePlayback(
+        track,
+        playableSource,
+        requestGeneration,
+        sourceId: sourceId,
+      );
       Uri? offlineArtworkUri;
       if (fromRecents) {
         // Playing a recent item must not reorder the Recents list. Its stored
@@ -427,7 +442,10 @@ class _SearchScreenState extends State<SearchScreen> {
       }
     }
     if (queue.isNotEmpty && requestGeneration == _playRequestGeneration) {
-      await PlaybackService.addTracksToQueue(queue, sourceId: 'online_youtube');
+      await PlaybackService.addTracksToQueue(
+        queue,
+        sourceId: searchRecentsSourceId,
+      );
     }
   }
 
@@ -451,18 +469,24 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _startOnlinePlayback(
     OnlineMusicTrack track,
     DirectAudioSource source,
-    int requestGeneration,
-  ) async {
+    int requestGeneration, {
+    required String sourceId,
+  }) async {
     Future<void> start(DirectAudioSource resolved) =>
         PlaybackService.startTracks(
           [cloveTrackFromOnlineSource(track, resolved)],
-          sourceId: 'online_youtube',
+          sourceId: sourceId,
           // YouTube stream URLs can require headers supplied by an extractor.
           shouldStart: () => requestGeneration == _playRequestGeneration,
           onPlaybackError: (error, _) {
             if (mounted && requestGeneration == _playRequestGeneration) {
               unawaited(
-                _refreshAfterPlaybackError(track, resolved, requestGeneration),
+                _refreshAfterPlaybackError(
+                  track,
+                  resolved,
+                  requestGeneration,
+                  sourceId: sourceId,
+                ),
               );
             }
           },
@@ -498,8 +522,9 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _refreshAfterPlaybackError(
     OnlineMusicTrack track,
     DirectAudioSource previous,
-    int requestGeneration,
-  ) async {
+    int requestGeneration, {
+    required String sourceId,
+  }) async {
     if (requestGeneration != _playRequestGeneration) return;
     if (previous.isAppManagedFile) {
       _showPlaybackError(
@@ -512,7 +537,7 @@ class _SearchScreenState extends State<SearchScreen> {
       if (requestGeneration != _playRequestGeneration) return;
       await PlaybackService.startTracks(
         [cloveTrackFromOnlineSource(track, fresh)],
-        sourceId: 'online_youtube',
+        sourceId: sourceId,
         shouldStart: () => requestGeneration == _playRequestGeneration,
         onPlaybackError: (error, _) {
           if (mounted && requestGeneration == _playRequestGeneration) {
@@ -649,7 +674,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                     icon: const Icon(
                                       Icons.clear_rounded,
                                       color: Colors.white38,
-                                      size: 22,
+                                      size: 24,
                                     ),
                                   )
                                 : null,

@@ -339,10 +339,14 @@ class LibraryScreenState extends State<LibraryScreen>
   }
 
   Future<void> _openPlaylist(PlaylistSummary summary) async {
+    openPlaylist(summary.playlist.id);
+  }
+
+  void openPlaylist(int playlistId) {
     _pushDestination(
       PlaylistDetailScreen(
         repository: _playlists,
-        playlistId: summary.playlist.id,
+        playlistId: playlistId,
         onClose: popDestination,
       ),
     );

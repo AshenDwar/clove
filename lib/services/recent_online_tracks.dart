@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,7 +12,12 @@ import 'offline_track_artwork.dart';
 class RecentOnlineTracks {
   static const int limit = 50;
   static const String _fileName = 'recent_online_tracks.json';
-  Future<void> _writeTail = Future<void>.value();
+  static final StreamController<List<OnlineMusicTrack>> _changes =
+      StreamController<List<OnlineMusicTrack>>.broadcast();
+  static Future<void> _writeTail = Future<void>.value();
+
+  /// Emits changed recent lists so open screens can refresh immediately.
+  static Stream<List<OnlineMusicTrack>> get changes => _changes.stream;
 
   Future<File> _file() async {
     final directory = await getApplicationSupportDirectory();
@@ -112,8 +118,10 @@ class RecentOnlineTracks {
   }
 
   Future<T> _serializeWrite<T>(Future<T> Function() operation) {
-    final result = _writeTail.then((_) => operation());
-    _writeTail = result.then<void>((_) {}).catchError((Object _) {});
+    final result = RecentOnlineTracks._writeTail.then((_) => operation());
+    RecentOnlineTracks._writeTail = result
+        .then<void>((_) {})
+        .catchError((Object _) {});
     return result;
   }
 
@@ -123,6 +131,7 @@ class RecentOnlineTracks {
       jsonEncode(tracks.map(_encode).toList(growable: false)),
       flush: true,
     );
+    _changes.add(List<OnlineMusicTrack>.unmodifiable(tracks));
   }
 
   String _key(OnlineMusicTrack track) => '${track.providerId}:${track.id}';

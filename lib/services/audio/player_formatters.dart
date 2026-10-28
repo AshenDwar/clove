@@ -7,6 +7,14 @@ String formatPlaybackTime(Duration duration) {
   return '$minutes:${remainder.toString().padLeft(2, '0')}';
 }
 
+Duration resolvePlaybackDuration(Duration? playerDuration, Duration? metadata) {
+  if (playerDuration != null && playerDuration > Duration.zero) {
+    return playerDuration;
+  }
+  if (metadata != null && metadata > Duration.zero) return metadata;
+  return Duration.zero;
+}
+
 AudioServiceRepeatMode nextRepeatMode(AudioServiceRepeatMode mode) =>
     switch (mode) {
       AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,

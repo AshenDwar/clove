@@ -73,4 +73,29 @@ void main() {
       }
     },
   );
+
+  test(
+    'does not persist expiring provider stream URLs as playback sources',
+    () {
+      final streamUri = Uri.https('rr.googlevideo.com', '/videoplayback', {
+        'expire': '9999999999',
+      });
+      final track = CloveTrack(
+        path: 'https://www.youtube.com/watch?v=online123',
+        sourceUri: streamUri,
+        title: 'Online song',
+        artist: 'Artist',
+        album: '',
+        duration: const Duration(minutes: 3),
+      );
+
+      final restored = trackFromPlaybackSessionJson(
+        trackToPlaybackSessionJson(track),
+      );
+
+      expect(restored.sourceUri, isNull);
+      expect(canRestorePlaybackTrack(restored), isFalse);
+      expect(canRestorePlaybackTrack(track), isFalse);
+    },
+  );
 }

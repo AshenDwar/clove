@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/clove_track.dart';
 import '../screens/now_playing_screen.dart';
 import '../services/audio/playback_service.dart';
+import '../services/audio/player_formatters.dart';
 import '../services/clove_notifications.dart';
 import '../services/playlist_repository.dart';
 import 'juggle_icon_button.dart';
@@ -254,28 +255,36 @@ class _CloveMiniPlayerState extends State<CloveMiniPlayer> {
                           child: StreamBuilder<Duration>(
                             stream: PlaybackService.positionStream,
                             builder: (context, positionSnapshot) {
-                              final duration = item.duration ?? Duration.zero;
-                              final totalMs = duration.inMilliseconds;
-                              final positionMs =
-                                  (positionSnapshot.data ?? Duration.zero)
-                                      .inMilliseconds;
-                              final progress = totalMs > 0
-                                  ? (positionMs / totalMs).clamp(0.0, 1.0)
-                                  : 0.0;
+                              return StreamBuilder<Duration?>(
+                                stream: PlaybackService.durationStream,
+                                builder: (context, durationSnapshot) {
+                                  final duration = resolvePlaybackDuration(
+                                    durationSnapshot.data,
+                                    item.duration,
+                                  );
+                                  final totalMs = duration.inMilliseconds;
+                                  final positionMs =
+                                      (positionSnapshot.data ?? Duration.zero)
+                                          .inMilliseconds;
+                                  final progress = totalMs > 0
+                                      ? (positionMs / totalMs).clamp(0.0, 1.0)
+                                      : null;
 
-                              return ClipRRect(
-                                borderRadius: BorderRadius.circular(50),
-                                child: SizedBox(
-                                  height: 1,
-                                  child: LinearProgressIndicator(
-                                    value: progress,
-                                    backgroundColor: Colors.white12,
-                                    valueColor:
-                                        const AlwaysStoppedAnimation<Color>(
-                                          _primaryText,
-                                        ),
-                                  ),
-                                ),
+                                  return ClipRRect(
+                                    borderRadius: BorderRadius.circular(50),
+                                    child: SizedBox(
+                                      height: 2,
+                                      child: LinearProgressIndicator(
+                                        value: progress,
+                                        backgroundColor: Colors.white12,
+                                        valueColor:
+                                            const AlwaysStoppedAnimation<Color>(
+                                              _primaryText,
+                                            ),
+                                      ),
+                                    ),
+                                  );
+                                },
                               );
                             },
                           ),

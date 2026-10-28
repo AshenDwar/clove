@@ -4,6 +4,8 @@ import '../../models/clove_track.dart';
 
 import 'package:audio_service/audio_service.dart';
 
+const String searchRecentsSourceId = 'search_recents';
+
 /// Appends entries without mutating the current queue or deduplicating tracks.
 List<CloveTrack> appendQueueTracks(
   List<CloveTrack> current,
@@ -51,6 +53,10 @@ Map<String, Object> queueSourceExtras(
       ? 'liked_songs'
       : sourceId == 'local_music'
       ? 'local_music'
+      : sourceId == 'online_youtube'
+      ? 'online_youtube'
+      : sourceId == searchRecentsSourceId
+      ? 'online_youtube'
       : 'unknown';
   return {
     if (sourceId case final String id) 'sourceId': id,
@@ -65,6 +71,9 @@ String? queueItemSourceId(MediaItem? item) {
   final sourceId = item?.extras?['sourceId'];
   return sourceId is String ? sourceId : null;
 }
+
+bool automaticRecommendationsEnabledForSource(String? sourceId) =>
+    sourceId == 'online_youtube';
 
 /// Returns the source context attached to the queue occurrence that actually
 /// became current. Resolving this value never changes the playback queue.
@@ -114,9 +123,15 @@ class AppendOnlyShuffleOrder extends DefaultShuffleOrder {
 
   @override
   void insert(int index, int count) {
+    final insertionPosition = indices.indexWhere(
+      (oldIndex) => oldIndex >= index,
+    );
     for (var i = 0; i < indices.length; i++) {
       if (indices[i] >= index) indices[i] += count;
     }
-    indices.addAll(List<int>.generate(count, (offset) => index + offset));
+    indices.insertAll(
+      insertionPosition < 0 ? indices.length : insertionPosition,
+      List<int>.generate(count, (offset) => index + offset),
+    );
   }
 }

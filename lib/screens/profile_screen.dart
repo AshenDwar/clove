@@ -231,7 +231,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: Column(
                                 children: [
                                   Text(
-                                    version == null ? 'Version' : 'v$version',
+                                    version == null ? 'Version' : 'V$version',
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(
                                       color: Colors.white70,
