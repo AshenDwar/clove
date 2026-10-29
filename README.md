@@ -4,11 +4,11 @@
 # 🌿 Clove
  
 Download the latest APK, try it out, and support the project by giving it a ⭐ on GitHub!
-Latest Version: 2.3.10. Always check for the latest version and update your app. Click to ⬇️ Download APK for the latest version.
+Latest Version: 3.7.10. Always check for the latest version and update your app. Click to ⬇️ Download APK for the latest version.
 
 <br/>
 
-<a href="https://drive.google.com/uc?export=download&id=1x-Js4Bi1sZBZipflU8mVqRc3IMp4t7p3">
+<a href="https://drive.google.com/uc?export=download&id=1lrppyzSTylVh1Bf3qOJDDLIepSyiWVuo">
   <img src="https://img.shields.io/badge/⬇%20DOWNLOAD-APK-2EA44F?style=for-the-badge&logo=android&logoColor=white" alt="Download Clove APK" height="45">
 </a>
 
@@ -36,7 +36,7 @@ Want to try Clove on your Android device? Download the APK using the button belo
 
 ### 🚀 Get Clove for Android (100% Malware Free)
 
-**[⬇️ Download APK](https://drive.google.com/uc?export=download&id=1x-Js4Bi1sZBZipflU8mVqRc3IMp4t7p3)**
+**[⬇️ Download APK](https://drive.google.com/uc?export=download&id=1lrppyzSTylVh1Bf3qOJDDLIepSyiWVuo)**
 
 *Download the APK, install it on your Android device, and start exploring!*
 
