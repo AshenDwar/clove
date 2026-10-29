@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
@@ -109,25 +110,25 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   List<Widget Function()> get _homeItems => [
     _quickAccess,
-    () => const SizedBox(height: 24),
-    () => _sectionHeader('Rhythm Guard', subtitle: 'Find and keep the beat'),
-    () => const SizedBox(height: 12),
+    () => const SizedBox(height: 26),
+    () => _sectionHeader('Rhythm Guard'),
+    () => const SizedBox(height: 8),
     _rhythmGuard,
-    () => const SizedBox(height: 16),
+    () => const SizedBox(height: 8),
     () => _sectionHeader(
       _recentTracks.isEmpty ? 'Recommendations' : 'Recently played',
       action: 'Search',
       onAction: widget.onOpenSearch,
     ),
-    () => const SizedBox(height: 12),
+    () => const SizedBox(height: 8),
     _recentSection,
-    () => const SizedBox(height: 12),
+    () => const SizedBox(height: 8),
     () => _sectionHeader(
       'Artists',
       action: 'Search',
       onAction: widget.onOpenSearch,
     ),
-    () => const SizedBox(height: 12),
+    () => const SizedBox(height: 8),
     _artistsSection,
     () => const SizedBox(height: 27),
 
@@ -844,12 +845,14 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       child: SizedBox(
                                         width: 42,
                                         height: 42,
-                                        child: Icon(
-                                          isPlaying
-                                              ? Icons.graphic_eq_rounded
-                                              : Icons.play_arrow_rounded,
-                                          color: _obsidian,
-                                          size: 28,
+                                        child: Center(
+                                          child: isPlaying
+                                              ? const PlayingEqualizer()
+                                              : const Icon(
+                                                  Icons.play_arrow_rounded,
+                                                  color: _obsidian,
+                                                  size: 28,
+                                                ),
                                         ),
                                       ),
                                     ),
@@ -1421,16 +1424,18 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 customBorder: const CircleBorder(),
                                 onTap: () => _openPlaylist(item),
                                 child: SizedBox(
-                                  width: 39,
-                                  height: 39,
-                                  child: Icon(
-                                    isPlaying
-                                        ? Icons.graphic_eq_rounded
-                                        : Icons.play_arrow_rounded,
-                                    color: Color(0xFF0B0B0B),
-                                    size: 27,
-                                  ),
-                                ),
+                                        width: 39,
+                                        height: 39,
+                                        child: Center(
+                                          child: isPlaying
+                                              ? const PlayingEqualizer()
+                                              : const Icon(
+                                                  Icons.play_arrow_rounded,
+                                                  color: _obsidian,
+                                                  size: 28,
+                                                ),
+                                        ),
+                                      ),
                               ),
                             ),
                           ),
@@ -1637,4 +1642,87 @@ class _BottomArchClipper extends CustomClipper<Path> {
 
   @override
   bool shouldReclip(covariant _BottomArchClipper oldClipper) => false;
+}
+
+class PlayingEqualizer extends StatefulWidget {
+  const PlayingEqualizer({super.key});
+
+  @override
+  State<PlayingEqualizer> createState() => _PlayingEqualizerState();
+}
+
+class _PlayingEqualizerState extends State<PlayingEqualizer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  // Change this to 1 or 2 to try another style.
+  static const int style = 3;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: PlaybackService.isPlayingStream,
+      initialData: PlaybackService.isPlaying,
+      builder: (context, snapshot) {
+        final isPlaying = snapshot.data ?? false;
+
+        if (isPlaying && !_controller.isAnimating) {
+          _controller.repeat();
+        } else if (!isPlaying && _controller.isAnimating) {
+          _controller.stop();
+        }
+
+        final heights = switch (style) {
+          1 => [18.0, 12.0, 18.0],
+          2 => [10.0, 16.0, 22.0, 16.0, 10.0],
+          _ => [12.0, 22.0, 16.0, 28.0, 19.0],
+        };
+
+        return SizedBox(
+          width: style == 1 ? 12 : 16,
+          height: 16,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: List.generate(heights.length, (index) {
+                  final phase = (_controller.value + index * 0.19) % 1.0;
+                  final wave = (0.5 + 0.5 * math.sin(phase * 2 * math.pi))
+                      .clamp(0.0, 1.0);
+                  final height = 5.0 + wave * (heights[index] - 5.0);
+
+                  return Container(
+                    width: 2,
+                    height: height.clamp(3.0, 16.0),
+                    decoration: BoxDecoration(
+                      color: _obsidian,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
 }
