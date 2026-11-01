@@ -156,6 +156,7 @@ class _MainShellState extends State<MainShell> {
 
         final library = _libraryKey.currentState;
         if (_selectedTab == 1 && (library?.canPopDestination ?? false)) {
+          if (library?.closeActivePlaylistSearchForBack() ?? false) return;
           library?.popDestination();
           return;
         }

@@ -12,6 +12,15 @@ abstract interface class OnlineMusicProvider {
   void dispose();
 }
 
+/// Optional byte or fraction progress while preparing a track for playback.
+abstract interface class OnlineMusicPlaybackProgressProvider
+    implements OnlineMusicProvider {
+  Future<DirectAudioSource> resolvePlaybackSourceWithProgress(
+    OnlineMusicTrack track, {
+    required void Function(double? progress, {int? etaSeconds}) onProgress,
+  });
+}
+
 abstract interface class CancellableOnlineMusicProvider {
   Future<void> cancelPendingPlayback();
 }
@@ -49,6 +58,14 @@ abstract interface class OfflineMusicDownloader {
   Future<DirectAudioSource> downloadForOffline(OnlineMusicTrack track);
 
   Future<String?> findOfflineAudioPath(OnlineMusicTrack track);
+}
+
+abstract interface class OfflineMusicProgressDownloader
+    implements OfflineMusicDownloader {
+  Future<DirectAudioSource> downloadForOfflineWithProgress(
+    OnlineMusicTrack track, {
+    required void Function(double? progress, {int? etaSeconds}) onProgress,
+  });
 }
 
 class UnavailableOnlineMusicProvider implements OnlineMusicProvider {

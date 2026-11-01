@@ -39,7 +39,9 @@ class YoutubeMusicProvider
         CancellableOnlineRecommendationProvider,
         OnlineMusicStreamResolver,
         CancellableOnlineMusicProvider,
-        OfflineMusicDownloader {
+        OfflineMusicDownloader,
+        OfflineMusicProgressDownloader,
+        OnlineMusicPlaybackProgressProvider {
   YoutubeMusicProvider({YoutubeExplode? youtube})
     : _youtube = youtube ?? YoutubeExplode();
 
@@ -348,15 +350,34 @@ class YoutubeMusicProvider
   Future<DirectAudioSource> resolvePlaybackSource(
     OnlineMusicTrack track,
   ) async {
+    return resolvePlaybackSourceWithProgress(
+      track,
+      onProgress: (_, {etaSeconds}) {},
+    );
+  }
+
+  @override
+  Future<DirectAudioSource> resolvePlaybackSourceWithProgress(
+    OnlineMusicTrack track, {
+    required void Function(double? progress, {int? etaSeconds}) onProgress,
+  }) async {
     if (_isAndroid) {
       try {
-        return await _downloadAndroidAudio(track);
+        onProgress(0);
+        final source = await _downloadAndroidAudio(
+          track,
+          onProgress: onProgress,
+        );
+        onProgress(1);
+        return source;
       } on Exception {
         // A direct stream still lets queued songs play when the Android
         // download runtime is unavailable or cannot prepare a temporary file.
+        onProgress(null);
         return _resolveStream(track);
       }
     }
+    onProgress(null);
     return _resolveStream(track);
   }
 
@@ -375,6 +396,17 @@ class YoutubeMusicProvider
   }
 
   @override
+  Future<DirectAudioSource> downloadForOfflineWithProgress(
+    OnlineMusicTrack track, {
+    required void Function(double? progress, {int? etaSeconds}) onProgress,
+  }) async {
+    onProgress(0);
+    final source = await _downloadAndroidAudio(track, onProgress: onProgress);
+    onProgress(1);
+    return source;
+  }
+
+  @override
   Future<String?> findOfflineAudioPath(OnlineMusicTrack track) async {
     await (_audioCacheInitialization ??= _initializeAudioCache());
     final path = _audioFileCache[track.id];
@@ -385,12 +417,14 @@ class YoutubeMusicProvider
   Future<DirectAudioSource> _downloadAndroidAudio(
     OnlineMusicTrack track, {
     int? recommendationRequestId,
+    void Function(double?, {int? etaSeconds})? onProgress,
   }) async {
     // Check the local cache before entering the serialized download queue. A
     // stalled download must never block playback of an already cached song.
     await (_audioCacheInitialization ??= _initializeAudioCache());
     final cachedPath = _audioFileCache[track.id];
     if (cachedPath != null && await File(cachedPath).exists()) {
+      onProgress?.call(1);
       return DirectAudioSource(
         uri: Uri.file(cachedPath),
         isAppManagedFile: true,
@@ -415,6 +449,7 @@ class YoutubeMusicProvider
       return _downloadAndroidAudioNow(
         track,
         recommendationRequestId: recommendationRequestId,
+        onProgress: onProgress,
       );
     });
   }
@@ -422,6 +457,7 @@ class YoutubeMusicProvider
   Future<DirectAudioSource> _downloadAndroidAudioNow(
     OnlineMusicTrack track, {
     int? recommendationRequestId,
+    void Function(double?, {int? etaSeconds})? onProgress,
   }) async {
     await (_ytdlpInitialization ??= Ytdlp.init());
     await (_audioCacheInitialization ??= _initializeAudioCache());
@@ -435,6 +471,7 @@ class YoutubeMusicProvider
     }
     final cachedPath = _audioFileCache[track.id];
     if (cachedPath != null && await File(cachedPath).exists()) {
+      onProgress?.call(1);
       return DirectAudioSource(
         uri: Uri.file(cachedPath),
         isAppManagedFile: true,
@@ -461,6 +498,21 @@ class YoutubeMusicProvider
         url: track.sourcePage.toString(),
         outputDir: audioDirectory.path,
         taskId: taskId,
+        onProgress: onProgress == null
+            ? null
+            : (progress) {
+                final fraction =
+                    progress.fraction ??
+                    (progress.downloadedBytes != null &&
+                            progress.totalBytes != null &&
+                            progress.totalBytes! > 0
+                        ? progress.downloadedBytes! / progress.totalBytes!
+                        : null);
+                onProgress(
+                  fraction?.clamp(0.0, 1.0).toDouble() ?? 0,
+                  etaSeconds: progress.etaSeconds,
+                );
+              },
       );
       late final String path;
       try {

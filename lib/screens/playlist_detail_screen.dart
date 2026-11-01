@@ -38,11 +38,12 @@ class PlaylistDetailScreen extends StatefulWidget {
   final VoidCallback? onClose;
 
   @override
-  State<PlaylistDetailScreen> createState() => _PlaylistDetailScreenState();
+  PlaylistDetailScreenState createState() => PlaylistDetailScreenState();
 }
 
-class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
+class PlaylistDetailScreenState extends State<PlaylistDetailScreen>
     with SingleTickerProviderStateMixin {
+  final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
   final FocusNode _searchFocusNode = FocusNode();
@@ -58,6 +59,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
   String _query = '';
   bool _searchVisible = false;
   bool _openingSearch = false;
+  bool _closingSearch = false;
   double _pullDistance = 0;
   Stream<UserPlaylist?>? _playlistStream;
   Stream<List<CloveTrack>>? _tracksStream;
@@ -65,6 +67,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
   Map<String, int> _queuePositions = const {};
 
   bool get _hasQuery => _query.trim().isNotEmpty;
+
+  /// Lets the owning in-shell navigator close search before popping this page.
+  bool closeSearchForBack() {
+    if (!_searchVisible) return false;
+    unawaited(_closeSearch());
+    return true;
+  }
 
   String get _playbackSourceId => widget.likedSongs
       ? PlaybackService.likedSongsSourceId
@@ -124,6 +133,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
   @override
   void dispose() {
     _searchController.removeListener(_handleSearchChanged);
+    _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _searchAnimationController.dispose();
@@ -143,10 +153,21 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
     _searchFocusNode.requestFocus();
   }
 
+  void _dismissKeyboardFromScroll() {
+    _searchFocusNode.unfocus();
+  }
+
   Future<void> _openSearch() async {
     if (_searchVisible || _openingSearch) return;
 
     _openingSearch = true;
+
+    // The pull-to-search gesture can leave the scroll view in its overscroll
+    // bounce. Snap back to the top before showing the overlay so the playlist
+    // header and cover remain in their normal position while results filter.
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+    }
 
     setState(() {
       _searchVisible = true;
@@ -163,13 +184,17 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
   }
 
   Future<void> _closeSearch() async {
-    if (!_searchVisible) return;
+    if (!_searchVisible || _closingSearch) return;
 
+    _closingSearch = true;
     _searchFocusNode.unfocus();
 
     await _searchAnimationController.reverse();
 
-    if (!mounted) return;
+    if (!mounted) {
+      _closingSearch = false;
+      return;
+    }
 
     setState(() {
       _searchVisible = false;
@@ -178,6 +203,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
     });
 
     _searchController.clear();
+    _closingSearch = false;
   }
 
   void _onScrollNotification(ScrollNotification notification) {
@@ -310,209 +336,232 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
     final visibleTracks = _filterTracks(tracks);
     final queuePositions = _positionsFor(tracks);
 
-    return Scaffold(
-      backgroundColor: _obsidian,
-      resizeToAvoidBottomInset: true,
-      body: Stack(
-        children: [
-          // Main screen. Tapping outside the search panel closes it.
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () {
-              if (_searchVisible) {
-                unawaited(_closeSearch());
-              }
-            },
-            child: NotificationListener<ScrollNotification>(
+    return PopScope(
+      canPop: !_searchVisible,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _searchVisible) {
+          unawaited(_closeSearch());
+        }
+      },
+      child: Scaffold(
+        backgroundColor: _obsidian,
+        resizeToAvoidBottomInset: true,
+        body: Stack(
+          children: [
+            NotificationListener<ScrollNotification>(
               onNotification: (notification) {
+                if (_searchVisible &&
+                    notification is ScrollStartNotification &&
+                    notification.dragDetails != null &&
+                    _searchFocusNode.hasFocus) {
+                  _dismissKeyboardFromScroll();
+                }
                 _onScrollNotification(notification);
                 return false;
               },
               child: CustomScrollView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
+                controller: _scrollController,
+                keyboardDismissBehavior: _searchVisible
+                    ? ScrollViewKeyboardDismissBehavior.manual
+                    : ScrollViewKeyboardDismissBehavior.onDrag,
                 slivers: [
-                  SliverAppBar(
-                    pinned: true,
-                    backgroundColor: _obsidian,
-                    foregroundColor: Colors.white,
-                    scrolledUnderElevation: 0,
-                    surfaceTintColor: Colors.transparent,
-                    elevation: 0,
-                    title: null,
-                    toolbarHeight: 48,
-                    collapsedHeight: 48,
-                    expandedHeight: 0,
-                    leading: JuggleIconButton(
-                      tooltip: 'Go back',
-                      onPressed: () {
-                        if (widget.onClose case final onClose?) {
-                          onClose();
-                        } else {
-                          Navigator.of(context).maybePop();
-                        }
-                      },
-                      size: 48,
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white,
-                        size: 22,
+                  if (_searchVisible)
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        // The search panel includes the device's top safe-area
+                        // inset. Keep the first song below the entire panel on
+                        // devices with different status-bar heights.
+                        height: MediaQuery.paddingOf(context).top + 88,
                       ),
                     ),
-                    flexibleSpace: const SizedBox.shrink(),
-                  ),
+                  if (!_searchVisible)
+                    SliverAppBar(
+                      pinned: true,
+                      backgroundColor: _obsidian,
+                      foregroundColor: Colors.white,
+                      scrolledUnderElevation: 0,
+                      surfaceTintColor: Colors.transparent,
+                      elevation: 0,
+                      title: null,
+                      toolbarHeight: 48,
+                      collapsedHeight: 48,
+                      expandedHeight: 0,
+                      leading: JuggleIconButton(
+                        tooltip: 'Go back',
+                        onPressed: () {
+                          if (widget.onClose case final onClose?) {
+                            onClose();
+                          } else {
+                            Navigator.of(context).maybePop();
+                          }
+                        },
+                        size: 48,
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                      flexibleSpace: const SizedBox.shrink(),
+                    ),
 
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
-                      child: Column(
-                        children: [
-                          Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 240),
-                              child: AspectRatio(
-                                aspectRatio: 1,
-                                child: artwork,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 22),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 27,
-                                height: 1.08,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'SHVNIX  ·  ${tracks.length} '
-                              '${tracks.length == 1 ? 'song' : 'songs'}',
-                              style: const TextStyle(
-                                color: _mutedText,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          Row(
-                            children: [
-                              if (widget.likedSongs && tracks.isNotEmpty)
-                                const Icon(
-                                  Icons.favorite_rounded,
-                                  color: _cloveMint,
-                                  size: 26,
+                  if (!_searchVisible)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
+                        child: Column(
+                          children: [
+                            Center(
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 240,
                                 ),
-                              const Spacer(),
-                              // Shuffle button — changes color based on shuffle state
-                              StreamBuilder<PlaybackState>(
-                                stream: PlaybackService.playbackStateStream,
-                                builder: (context, snapshot) {
-                                  final shuffleOn =
-                                      snapshot.data?.shuffleMode ==
-                                      AudioServiceShuffleMode.all;
-
-                                  return AnimatedContainer(
-                                    duration: const Duration(milliseconds: 200),
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      color: shuffleOn
-                                          ? _cloveMint.withValues(alpha: 0.18)
-                                          : _inputSurface,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: JuggleIconButton(
-                                      tooltip: shuffleOn
-                                          ? 'Turn shuffle off'
-                                          : 'Turn shuffle on',
-                                      onPressed: tracks.isEmpty
-                                          ? null
-                                          : () async {
-                                              await PlaybackService.setShuffleEnabled(
-                                                !shuffleOn,
-                                              );
-                                            },
-                                      size: 48,
-                                      icon: Icon(
-                                        Icons.shuffle_rounded,
-                                        color: shuffleOn
-                                            ? _cloveMint
-                                            : _mutedText,
-                                        size: 24,
-                                      ),
-                                    ),
-                                  );
-                                },
+                                child: AspectRatio(
+                                  aspectRatio: 1,
+                                  child: artwork,
+                                ),
                               ),
+                            ),
+                            const SizedBox(height: 22),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 27,
+                                  height: 1.08,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'SHVNIX  ·  ${tracks.length} '
+                                '${tracks.length == 1 ? 'song' : 'songs'}',
+                                style: const TextStyle(
+                                  color: _mutedText,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            Row(
+                              children: [
+                                if (widget.likedSongs && tracks.isNotEmpty)
+                                  const Icon(
+                                    Icons.favorite_rounded,
+                                    color: _cloveMint,
+                                    size: 26,
+                                  ),
+                                const Spacer(),
+                                // Shuffle button — changes color based on shuffle state
+                                StreamBuilder<PlaybackState>(
+                                  stream: PlaybackService.playbackStateStream,
+                                  builder: (context, snapshot) {
+                                    final shuffleOn =
+                                        snapshot.data?.shuffleMode ==
+                                        AudioServiceShuffleMode.all;
 
-                              const SizedBox(width: 10),
-
-                              // Play / Pause — same JuggleIconButton structure as Now Playing
-                              StreamBuilder<String?>(
-                                stream: PlaybackService.playbackSourceStream,
-                                initialData: PlaybackService.activeSourceId,
-                                builder: (context, sourceSnapshot) {
-                                  return StreamBuilder<PlaybackState>(
-                                    stream: PlaybackService.playbackStateStream,
-                                    builder: (context, stateSnapshot) {
-                                      final active =
-                                          sourceSnapshot.data ==
-                                          _playbackSourceId;
-
-                                      final playing =
-                                          active &&
-                                          (stateSnapshot.data?.playing ??
-                                              false);
-
-                                      return JuggleIconButton(
-                                        tooltip: playing
-                                            ? 'Pause playlist'
-                                            : 'Play playlist',
-                                        size: 68,
+                                    return AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 200,
+                                      ),
+                                      width: 48,
+                                      height: 48,
+                                      decoration: BoxDecoration(
+                                        color: shuffleOn
+                                            ? _cloveMint.withValues(alpha: 0.18)
+                                            : _inputSurface,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: JuggleIconButton(
+                                        tooltip: shuffleOn
+                                            ? 'Turn shuffle off'
+                                            : 'Turn shuffle on',
                                         onPressed: tracks.isEmpty
                                             ? null
-                                            : () => _togglePlaylistPlayback(
-                                                context,
-                                                tracks,
-                                                active: active,
-                                                playing: playing,
-                                              ),
-                                        icon: Container(
-                                          width: 58,
-                                          height: 58,
-                                          decoration: const BoxDecoration(
-                                            color: _cloveMint,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Icon(
-                                            playing
-                                                ? Icons.pause_rounded
-                                                : Icons.play_arrow_rounded,
-                                            size: 34,
-                                            color: _obsidian,
-                                          ),
+                                            : () async {
+                                                await PlaybackService.setShuffleEnabled(
+                                                  !shuffleOn,
+                                                );
+                                              },
+                                        size: 48,
+                                        icon: Icon(
+                                          Icons.shuffle_rounded,
+                                          color: shuffleOn
+                                              ? _cloveMint
+                                              : _mutedText,
+                                          size: 24,
                                         ),
-                                      );
-                                    },
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                const SizedBox(width: 10),
+
+                                // Play / Pause — same JuggleIconButton structure as Now Playing
+                                StreamBuilder<String?>(
+                                  stream: PlaybackService.playbackSourceStream,
+                                  initialData: PlaybackService.activeSourceId,
+                                  builder: (context, sourceSnapshot) {
+                                    return StreamBuilder<PlaybackState>(
+                                      stream:
+                                          PlaybackService.playbackStateStream,
+                                      builder: (context, stateSnapshot) {
+                                        final active =
+                                            sourceSnapshot.data ==
+                                            _playbackSourceId;
+
+                                        final playing =
+                                            active &&
+                                            (stateSnapshot.data?.playing ??
+                                                false);
+
+                                        return JuggleIconButton(
+                                          tooltip: playing
+                                              ? 'Pause playlist'
+                                              : 'Play playlist',
+                                          size: 68,
+                                          onPressed: tracks.isEmpty
+                                              ? null
+                                              : () => _togglePlaylistPlayback(
+                                                  context,
+                                                  tracks,
+                                                  active: active,
+                                                  playing: playing,
+                                                ),
+                                          icon: Container(
+                                            width: 58,
+                                            height: 58,
+                                            decoration: const BoxDecoration(
+                                              color: _cloveMint,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Icon(
+                                              playing
+                                                  ? Icons.pause_rounded
+                                                  : Icons.play_arrow_rounded,
+                                              size: 34,
+                                              color: _obsidian,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
 
                   if (loading)
                     const SliverFillRemaining(
@@ -534,7 +583,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
                   else if (visibleTracks.isEmpty)
                     SliverFillRemaining(
                       hasScrollBody: false,
-                      child: _hasQuery ? _emptySearch() : _emptyPlaylist(),
+                      child: _searchVisible
+                          ? (_hasQuery
+                                ? _emptySearch()
+                                : const SizedBox.shrink())
+                          : (_hasQuery ? _emptySearch() : _emptyPlaylist()),
                     )
                   else
                     SliverPadding(
@@ -556,29 +609,28 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
                 ],
               ),
             ),
-          ),
 
-          // Search panel stays above the tap-detecting main screen.
-          // Interactions inside this panel won't trigger the outside tap.
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SlideTransition(
-              position: _searchSlideAnimation,
-              child: Material(
-                color: _obsidian,
-                child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                    child: _searchField(),
+            // Search panel stays above the playlist content.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SlideTransition(
+                position: _searchSlideAnimation,
+                child: Material(
+                  color: _obsidian,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                      child: _searchField(),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -587,6 +639,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen>
     return TextField(
       controller: _searchController,
       focusNode: _searchFocusNode,
+      // Tapping song rows or blank playlist space must not dismiss the search
+      // overlay by implicitly removing focus from this field.
+      onTapOutside: (_) {},
       autofocus: false,
       textInputAction: TextInputAction.search,
       style: const TextStyle(color: Colors.white, fontSize: 15),

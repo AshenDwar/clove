@@ -27,6 +27,55 @@ const Color _mint = Color(0xFF1DE9B6);
 const Color _muted = Color(0xFFB7B5BE);
 const Duration _searchRequestTimeout = Duration(seconds: 45);
 
+class _AnimatedPercentCircle extends StatefulWidget {
+  const _AnimatedPercentCircle({required this.progress});
+
+  final double progress;
+
+  @override
+  State<_AnimatedPercentCircle> createState() => _AnimatedPercentCircleState();
+}
+
+class _AnimatedPercentCircleState extends State<_AnimatedPercentCircle> {
+  Duration _duration = const Duration(milliseconds: 120);
+
+  @override
+  void didUpdateWidget(covariant _AnimatedPercentCircle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final difference = (widget.progress - oldWidget.progress).abs();
+    if (difference > 0.15) {
+      _duration = Duration(milliseconds: (difference * 1200).round());
+    } else {
+      _duration = const Duration(milliseconds: 120);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
+    tween: Tween<double>(begin: 0, end: widget.progress),
+    duration: _duration,
+    curve: Curves.linear,
+    builder: (context, progress, _) => Stack(
+      alignment: Alignment.center,
+      children: [
+        CircularProgressIndicator(
+          value: progress,
+          color: _mint,
+          strokeWidth: 2,
+        ),
+        Text(
+          '${(progress * 100).round()}%',
+          style: const TextStyle(
+            color: _mint,
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, this.provider, this.initialQuery});
 
@@ -305,7 +354,17 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_onlineActions.isQueueing(trackKey)) return false;
     _onlineActions.beginQueueing(trackKey);
     try {
-      final saving = _onlineQueueTail.then((_) => _downloadOfflineTrack(track));
+      final saving = _onlineQueueTail.then(
+        (_) => _downloadOfflineTrack(
+          track,
+          onProgress: (progress, {etaSeconds}) =>
+              _onlineActions.updateQueueingProgress(
+                trackKey,
+                progress,
+                etaSeconds: etaSeconds,
+              ),
+        ),
+      );
       _onlineQueueTail = saving.then<void>((_) {}).catchError((Object _) {});
       final offlineTrack = await saving;
       _offlinePathLookups[trackKey] = Future.value(offlineTrack.path);
@@ -321,7 +380,17 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_onlineActions.isQueueing(trackKey)) return;
     _onlineActions.beginQueueing(trackKey);
     try {
-      final saving = _onlineQueueTail.then((_) => _downloadOfflineTrack(track));
+      final saving = _onlineQueueTail.then(
+        (_) => _downloadOfflineTrack(
+          track,
+          onProgress: (progress, {etaSeconds}) =>
+              _onlineActions.updateQueueingProgress(
+                trackKey,
+                progress,
+                etaSeconds: etaSeconds,
+              ),
+        ),
+      );
       _onlineQueueTail = saving.then<void>((_) {}).catchError((Object _) {});
       final offlineTrack = await saving;
       _offlinePathLookups[trackKey] = Future.value(offlineTrack.path);
@@ -338,7 +407,10 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-  Future<CloveTrack> _downloadOfflineTrack(OnlineMusicTrack track) async {
+  Future<CloveTrack> _downloadOfflineTrack(
+    OnlineMusicTrack track, {
+    void Function(double? progress, {int? etaSeconds})? onProgress,
+  }) async {
     final provider = _provider;
     if (provider is! OfflineMusicDownloader) {
       throw const OnlineMusicProviderFailure(
@@ -346,8 +418,17 @@ class _SearchScreenState extends State<SearchScreen> {
         message: 'Offline downloads are not supported by this provider.',
       );
     }
-    final source = await (provider as OfflineMusicDownloader)
-        .downloadForOffline(track);
+    final downloader = provider as OfflineMusicDownloader;
+    final source =
+        onProgress != null && downloader is OfflineMusicProgressDownloader
+        ? await downloader.downloadForOfflineWithProgress(
+            track,
+            onProgress: onProgress,
+          )
+        : await downloader.downloadForOffline(track);
+    if (onProgress != null && downloader is! OfflineMusicProgressDownloader) {
+      onProgress(null);
+    }
     final audioFile = File.fromUri(source.uri);
     if (!await audioFile.exists()) {
       throw const OnlineMusicProviderFailure(
@@ -383,7 +464,23 @@ class _SearchScreenState extends State<SearchScreen> {
     final trackKey = '${track.providerId}:${track.id}';
     _onlineActions.beginOpening(trackKey);
     try {
-      final source = await _provider.resolvePlaybackSource(track);
+      final source = _provider is OnlineMusicPlaybackProgressProvider
+          ? await (_provider as OnlineMusicPlaybackProgressProvider)
+                .resolvePlaybackSourceWithProgress(
+                  track,
+                  onProgress: (progress, {etaSeconds}) {
+                    if (!mounted ||
+                        requestGeneration != _playRequestGeneration) {
+                      return;
+                    }
+                    _onlineActions.updateOpeningProgress(
+                      trackKey,
+                      progress,
+                      etaSeconds: etaSeconds,
+                    );
+                  },
+                )
+          : await _provider.resolvePlaybackSource(track);
       if (requestGeneration != _playRequestGeneration) return;
       final playableSource = await _usablePlaybackSource(track, source);
       if (requestGeneration != _playRequestGeneration) return;
@@ -416,6 +513,13 @@ class _SearchScreenState extends State<SearchScreen> {
       if (!mounted || requestGeneration != _playRequestGeneration) return;
       _showPlaybackError(_playbackErrorMessage(error));
     } finally {
+      // Let the percentage animation reach 100% before replacing it with the
+      // normal Add icon. yt-dlp can deliver its final callbacks faster than a
+      // frame can be painted, which otherwise looks like a jump from 0 to 100.
+      if (_onlineActions.openingProgress(trackKey) case final progress?
+          when progress >= 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 1250));
+      }
       _onlineActions.finishOpening(trackKey);
     }
   }
@@ -930,7 +1034,15 @@ class _SearchScreenState extends State<SearchScreen> {
                         ),
 
                         const SizedBox(width: 8),
-                        _searchSaveButton(result, isOpening || isQueueing),
+                        _searchSaveButton(
+                          result,
+                          isOpening || isQueueing,
+                          progress: isOpening
+                              ? _onlineActions.openingProgress(resultKey)
+                              : isQueueing
+                              ? _onlineActions.queueingProgress(resultKey)
+                              : null,
+                        ),
 
                         if (showingRecents)
                           JuggleIconButton(
@@ -955,16 +1067,22 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _searchSaveButton(OnlineMusicTrack track, bool busy) {
+  Widget _searchSaveButton(
+    OnlineMusicTrack track,
+    bool busy, {
+    double? progress,
+  }) {
     if (busy) {
-      return const SizedBox(
+      return SizedBox(
         width: 40,
         height: 40,
         child: Center(
           child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(color: _mint, strokeWidth: 2),
+            width: progress == null ? 22 : 30,
+            height: progress == null ? 22 : 30,
+            child: progress == null
+                ? const CircularProgressIndicator(color: _mint, strokeWidth: 2)
+                : _AnimatedPercentCircle(progress: progress),
           ),
         ),
       );

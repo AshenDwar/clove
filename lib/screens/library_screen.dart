@@ -89,6 +89,7 @@ class LibraryScreenState extends State<LibraryScreen>
   bool _scanning = false;
 
   final List<Widget> _destinations = [];
+  final List<GlobalKey<PlaylistDetailScreenState>?> _playlistDetailKeys = [];
 
   bool get canPopDestination => _destinations.isNotEmpty;
   bool get canPopProfile => _profileOpen;
@@ -97,7 +98,16 @@ class LibraryScreenState extends State<LibraryScreen>
 
   void popDestination() {
     if (!canPopDestination || !mounted) return;
-    setState(() => _destinations.removeLast());
+    setState(() {
+      _destinations.removeLast();
+      _playlistDetailKeys.removeLast();
+    });
+  }
+
+  bool closeActivePlaylistSearchForBack() {
+    if (_playlistDetailKeys.isEmpty) return false;
+    return _playlistDetailKeys.last?.currentState?.closeSearchForBack() ??
+        false;
   }
 
   void popProfile() {
@@ -129,11 +139,20 @@ class LibraryScreenState extends State<LibraryScreen>
 
   void showLibraryHome() {
     if (_destinations.isEmpty || !mounted) return;
-    setState(_destinations.clear);
+    setState(() {
+      _destinations.clear();
+      _playlistDetailKeys.clear();
+    });
   }
 
-  void _pushDestination(Widget destination) {
-    setState(() => _destinations.add(destination));
+  void _pushDestination(
+    Widget destination, {
+    GlobalKey<PlaylistDetailScreenState>? playlistDetailKey,
+  }) {
+    setState(() {
+      _destinations.add(destination);
+      _playlistDetailKeys.add(playlistDetailKey);
+    });
   }
 
   @override
@@ -343,22 +362,28 @@ class LibraryScreenState extends State<LibraryScreen>
   }
 
   void openPlaylist(int playlistId) {
+    final detailKey = GlobalKey<PlaylistDetailScreenState>();
     _pushDestination(
       PlaylistDetailScreen(
+        key: detailKey,
         repository: _playlists,
         playlistId: playlistId,
         onClose: popDestination,
       ),
+      playlistDetailKey: detailKey,
     );
   }
 
   Future<void> _openLikedSongs() async {
+    final detailKey = GlobalKey<PlaylistDetailScreenState>();
     _pushDestination(
       PlaylistDetailScreen(
+        key: detailKey,
         repository: _playlists,
         likedSongs: true,
         onClose: popDestination,
       ),
+      playlistDetailKey: detailKey,
     );
   }
 
